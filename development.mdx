@@ -1,94 +1,47 @@
 ---
-title: 'Development'
-description: 'Preview changes locally to update your docs'
+title: "Contributing"
+description: "How to contribute to Gaussia — from proposing metrics to building SDKs."
 ---
 
-<Info>
-  **Prerequisites**:
-  - Node.js version 19 or higher
-  - A docs repository with a `docs.json` file
-</Info>
+Gaussia is a community-driven project. There are several ways to contribute, whether you come from a research background or an engineering one.
 
-Follow these steps to install and run Mintlify on your operating system.
+## Propose a metric
+
+Every metric starts as a paper. If you've found a peer-reviewed paper that defines a useful evaluation methodology, you can propose it.
 
 <Steps>
-<Step title="Install the Mintlify CLI">
-
-```bash
-npm i -g mint
-```
-</Step>
-
-<Step title="Preview locally">
-
-Navigate to your docs directory where your `docs.json` file is located, and run the following command:
-
-```bash
-mint dev
-```
-
-A local preview of your documentation will be available at `http://localhost:3000`.
-
-</Step>
+  <Step title="Open an issue">
+    Open an issue in the [papers repository](https://github.com/gaussia-labs/papers) referencing the paper. Include the title, authors, venue, and a brief summary of the methodology.
+  </Step>
+  <Step title="Community discussion">
+    The community debates the paper's assumptions, limitations, and how the implementation should map to the methodology.
+  </Step>
+  <Step title="RFC">
+    After consensus, an RFC is opened. Every design decision is documented and traceable to the original discussion.
+  </Step>
 </Steps>
 
-## Custom ports
+## Build an SDK
 
-By default, Mintlify uses port 3000. You can customize the port Mintlify runs on by using the `--port` flag. For example, to run Mintlify on port 3333, use this command:
+Once a metric is approved via RFC, it needs implementations. Each SDK is maintained independently by the community, following the language-agnostic spec derived from the RFC.
 
-```bash
-mint dev --port 3333
-```
+| SDK | Repository | Status |
+| --- | --- | --- |
+| Python | [gaussia-labs/pygaussia](https://github.com/gaussia-labs/pygaussia) | Stable |
+| TypeScript | — | Beta |
+| Rust | — | Planned |
+| C++ | — | Planned |
+| Swift | — | Planned |
+| Go | — | Planned |
 
-If you attempt to run Mintlify on a port that's already in use, it will use the next available port:
+Want to maintain an SDK for your favorite language? Read the [contribution guide](https://github.com/gaussia-labs/papers).
 
-```md
-Port 3000 is already in use. Trying 3001 instead.
-```
+## Contribute to the docs
 
-## Mintlify versions
-
-Please note that each CLI release is associated with a specific version of Mintlify. If your local preview does not align with the production version, please update the CLI:
-
-```bash
-npm mint update
-```
-
-## Validating links
-
-The CLI can assist with validating links in your documentation. To identify any broken links, use the following command:
+This documentation site is open source. To run it locally:
 
 ```bash
-mint broken-links
+npm i -g mint && mint dev
 ```
 
-## Deployment
-
-If the deployment is successful, you should see the following:
-
-<Frame>
-  <img src="/images/checks-passed.png" alt="Screenshot of a deployment confirmation message that says All checks have passed." style={{ borderRadius: '0.5rem' }} />
-</Frame>
-
-## Code formatting
-
-We suggest using extensions on your IDE to recognize and format MDX. If you're a VSCode user, consider the [MDX VSCode extension](https://marketplace.visualstudio.com/items?itemName=unifiedjs.vscode-mdx) for syntax highlighting, and [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) for code formatting.
-
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title='Error: Could not load the "sharp" module using the darwin-arm64 runtime'>
-
-    This may be due to an outdated version of node. Try the following:
-    1. Remove the currently-installed version of the CLI: `npm remove -g mint`
-    2. Upgrade to Node v19 or higher.
-    3. Reinstall the CLI: `npm i -g mint`
-  </Accordion>
-
-  <Accordion title="Issue: Encountering an unknown error">
-  
-    Solution: Go to the root of your device and delete the `~/.mintlify` folder. Then run `mint dev` again.
-  </Accordion>
-</AccordionGroup>
-
-Curious about what changed in the latest CLI version? Check out the [CLI changelog](https://www.npmjs.com/package/mintlify?activeTab=versions).
+The source lives in the [docs repository](https://github.com/gaussia-labs/docs). Submit a pull request with your changes.

@@ -1,97 +1,98 @@
 ---
 title: "Introduction"
-description: "Welcome to the new home for your documentation"
+description: "Scientific metrics for intelligent behaviors. If you can't trace it to a paper, it's not a metric — it's an opinion."
 ---
 
-## Setting up
+Gaussia is an open-source library for evaluating AI-generated content with scientific rigor. Every metric is backed by peer-reviewed research, so your evaluations become part of the scientific record — not just a number in a dashboard.
 
-Get your documentation site up and running in minutes.
+Born at [Alquimia AI Labs](https://alquimia.ai/).
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+## Why Gaussia
 
-## Make it yours
+There's a thriving ecosystem of tools for evaluating language models. Most of them work. And yet, if you ask an engineering team why a faithfulness score of 0.83 is trustworthy, the most common answer is: *"Because that's what the dashboard says."*
 
-Design a docs site that looks great and empowers your users.
+That's not a technical problem. It's an epistemological one. Evaluating AI systems with metrics that no one can trace, cite, or reproduce is exactly the kind of magical thinking those systems taught us to avoid.
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+Existing tools treat quality, security, and ethics in silos. No single tool covers all three with scientific rigor. When a tool gives you a score of 0.83, you can't cite the paper that defines what 0.83 means. And every tool assumes you're evaluating an AI model — but intelligent behavior can come from humans too.
+
+Gaussia starts from a different premise: **the unit of analysis is the behavior, not the architecture.** A behavior can come from an LLM, a voice agent in a call center, a human operator, or a hybrid system.
+
+## The methodology
+
+Every metric in Gaussia comes with a contract: explicit scientific backing. When you use a metric, you know exactly what paper defined it, how it was validated, and how to cite it in your own work.
+
+<Columns cols={3}>
+  <Card title="Paper first" icon="book-open">
+    No metric exists without its paper. Title, authors, year, venue, arXiv/DOI, implementation notes, validation datasets, and BibTeX entry — all included.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Reproducible" icon="flask">
+    Every implementation follows the exact methodology described in the paper. Run the same validation the authors did.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Citeable" icon="quote-left">
+    When you use Gaussia in production or research, you can cite the underlying papers. Your evaluations become part of the scientific record.
   </Card>
 </Columns>
 
-## Create beautiful pages
+## How metrics get added
 
-Everything you need to create world-class documentation.
+Gaussia doesn't implement metrics because they sound good. Every metric goes through a public review process before a single line of code is written.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<Steps>
+  <Step title="Paper proposal">
+    Anyone can open an issue with a reference to a peer-reviewed paper. The discussion starts with the science, not the code.
+  </Step>
+  <Step title="Methodology discussion">
+    Open debate about the paper's assumptions, limitations, and how the implementation should map to the methodology.
+  </Step>
+  <Step title="RFC & implementation">
+    Only after consensus on interpretation does the RFC open. Every design decision is documented and traceable.
+  </Step>
+</Steps>
+
+This means Gaussia's metrics are publicly audited before they exist. The debate is visible. Disagreements are recorded. Implementation is traceable to documented decisions.
+
+## What makes it different
+
+<Columns cols={3}>
+  <Card title="Multi-environment native" icon="microchip">
+    Native implementations for every major environment — server, edge, browser, and embedded. Not wrappers around a single runtime.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Multimodal by design" icon="photo-film">
+    Text, audio, image, video. Intelligence doesn't communicate only with text. Neither should evaluation.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Infrastructure, not platform" icon="cube">
+    MIT license. No telemetry. No lock-in. Build your own dashboards, auditing services, or compliance tools on top.
   </Card>
 </Columns>
 
-## Need inspiration?
+## SDKs
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+Every metric starts as a paper. Once approved, the community builds official SDKs that implement the science in your language of choice.
+
+| SDK | Status |
+| --- | --- |
+| [Python](/sdks/python/index) | Stable |
+| TypeScript | Beta |
+| Rust | Planned |
+| C++ | Planned |
+| Swift | Planned |
+| Go | Planned |
+
+## Explore
+
+<Columns cols={2}>
+  <Card
+    title="Paper index"
+    icon="file-lines"
+    href="https://github.com/gaussia-labs/papers"
+  >
+    All referenced papers with BibTeX entries and summaries.
+  </Card>
+  <Card
+    title="GitHub"
+    icon="github"
+    href="https://github.com/gaussia-labs"
+  >
+    Source code, issues, RFCs, and contribution guidelines.
+  </Card>
+</Columns>

@@ -3,9 +3,13 @@
   "theme": "mint",
   "name": "Gaussia",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#ab412d",
+    "light": "#ab412d",
+    "dark": "#c8a787"
+  },
+  "background": {
+    "light": "#f5f0e8",
+    "dark": "#231e20"
   },
   "favicon": "/favicon.svg",
   "navigation": {
@@ -17,7 +21,6 @@
             "group": "Getting started",
             "pages": [
               "index",
-              "quickstart",
               "development"
             ]
           }
