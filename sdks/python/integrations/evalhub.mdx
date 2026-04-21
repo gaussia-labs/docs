@@ -40,11 +40,13 @@ In a typical setup:
 8. The provider returns structured results and artifacts.
 9. If MLflow is enabled, benchmark evidence is stored there as well.
 
+### Logical flow
+
 <Frame>
   ```mermaid
   flowchart LR
-      source["Source payload or event"]
-      bridge["Optional bridge<br/>normalize + dedupe"]
+      source["Source system"]
+      bridge["Optional bridge<br/>Normalize and dedupe"]
       evalhub["EvalHub"]
       provider["Gaussia provider"]
       mlflow["MLflow"]
@@ -55,6 +57,72 @@ In a typical setup:
       provider --> evalhub
       provider --> mlflow
       evalhub --> mlflow
+  ```
+</Frame>
+
+### Deployment view
+
+<Frame>
+  ```mermaid
+  flowchart TB
+      subgraph source_plane["Source plane"]
+          source["Application or event source"]
+          bridge["Bridge service"]
+      end
+
+      subgraph evalhub_plane["EvalHub plane"]
+          api["EvalHub API"]
+          scheduler["EvalHub scheduler"]
+      end
+
+      subgraph execution_plane["Execution plane"]
+          job1["Benchmark job<br/>humanity"]
+          job2["Benchmark job<br/>context"]
+          job3["Benchmark job<br/>conversational"]
+          job4["Benchmark job<br/>bias"]
+          job5["Benchmark job<br/>toxicity"]
+      end
+
+      tracking["MLflow"]
+
+      source --> bridge
+      bridge --> api
+      api --> scheduler
+      scheduler --> job1
+      scheduler --> job2
+      scheduler --> job3
+      scheduler --> job4
+      scheduler --> job5
+      job1 --> tracking
+      job2 --> tracking
+      job3 --> tracking
+      job4 --> tracking
+      job5 --> tracking
+      api --> tracking
+  ```
+</Frame>
+
+### One event to many benchmarks
+
+<Frame>
+  ```mermaid
+  sequenceDiagram
+      participant Source as Source system
+      participant Bridge as Bridge
+      participant EvalHub as EvalHub
+      participant Provider as Gaussia provider jobs
+      participant MLflow as MLflow
+
+      Source->>Bridge: conversation payload or event
+      Bridge->>Bridge: normalize and select benchmarks
+      Bridge->>EvalHub: JobSubmissionRequest
+      EvalHub->>Provider: humanity
+      EvalHub->>Provider: context
+      EvalHub->>Provider: conversational
+      EvalHub->>Provider: bias (if eligible)
+      EvalHub->>Provider: toxicity (if eligible)
+      Provider->>MLflow: one run per benchmark
+      Provider->>EvalHub: results and status updates
   ```
 </Frame>
 
