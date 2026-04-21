@@ -115,18 +115,6 @@ In a typical setup:
   ```
 </Frame>
 
-## When this pattern fits
-
-Use Gaussia with EvalHub when you want to:
-
-- run evaluations in Kubernetes
-- fan out one evaluation into multiple benchmarks
-- keep orchestration separate from metric logic
-- track benchmark evidence centrally
-- evaluate persisted conversations instead of only live model endpoints
-
-This works especially well when your system already emits structured conversational payloads.
-
 ## The contract between EvalHub and Gaussia
 
 A practical pattern is to put the business payload inside each benchmark:
@@ -231,29 +219,23 @@ The source can be:
 
 The mapping rule stays the same.
 
-## Choose which benchmarks to expose
+## Choose benchmarks and runtime dependencies
 
-Do not expose every metric just because Gaussia has it. Expose the benchmarks your payload can actually support.
+Expose only the benchmarks your payload can actually support.
 
-A common integration policy is:
+A common policy is:
 
 - always include `humanity`, `context`, and `conversational`
 - include `bias` and `toxicity` only when the payload yields at least 5 `human/assistant` pairs
 
-This keeps benchmark execution deterministic and avoids noisy failures on short conversations.
+In practice:
 
-For metric-by-metric details, use the [Metrics overview](/sdks/python/metrics/overview) and the individual metric pages.
-
-## Know which metrics need models
-
-Not every Gaussia metric has the same runtime profile.
-
-- `humanity` can run without an external judge model
+- `humanity` does not need an external judge model
 - `context` and `conversational` need a judge model
 - `bias` needs a guardian-style model
 - `toxicity` needs embeddings and clustering support
 
-For the full dependency and model setup, see:
+For metric-by-metric setup, see:
 
 - [Metrics overview](/sdks/python/metrics/overview)
 - [LLM judge](/sdks/python/concepts/llm-judge)
@@ -621,71 +603,6 @@ If that token expires or loses permission, job creation may fail even when the p
 If `bias` and `toxicity` require enough interactions, gate them before submission. Do not submit benchmarks that you already know cannot run.
 
 That keeps failures meaningful instead of noisy.
-
-## A good rollout sequence
-
-<Steps>
-  <Step title="Start with one benchmark">
-    Validate `humanity` first. It has the smallest runtime footprint and the simplest dependency model.
-  </Step>
-
-  <Step title="Add judge-based metrics">
-    Once the provider contract is stable, add `context` and `conversational` with a judge model.
-  </Step>
-
-  <Step title="Add gated benchmarks">
-    Introduce `bias` and `toxicity` only after you can reliably derive enough interactions and provide the required model infrastructure.
-  </Step>
-
-  <Step title="Operationalize tracking">
-    Add experiment and run tagging so every benchmark result is easy to trace back to the source conversation.
-  </Step>
-</Steps>
-
-## Recommended repository structure
-
-```text
-src/
-├── bridge/
-│   ├── config.py
-│   ├── service.py
-│   ├── state.py
-│   └── http_app.py
-├── provider/
-│   ├── adapter.py
-│   ├── benchmarks.py
-│   ├── config.py
-│   └── mlflow_runs.py
-└── shared/
-    ├── context_payload.py
-    ├── gaussia_dataset.py
-    └── benchmark_selection.py
-```
-
-This keeps the responsibilities clear:
-
-- `bridge/` handles ingestion and job submission
-- `provider/` handles EvalHub runtime execution
-- `shared/` owns the domain mapping and dataset logic
-
-## Final takeaway
-
-The cleanest way to use Gaussia with EvalHub is to:
-
-- treat EvalHub as the orchestrator
-- treat Gaussia as the metric engine
-- keep payload normalization in a thin bridge or adapter
-- map business payloads into `gaussia.Dataset`
-- expose only the benchmarks your payload can really support
-- keep benchmark execution isolated per benchmark
-
-That gives you:
-
-- clean orchestration
-- reusable metric logic
-- benchmark isolation
-- strong auditability
-- a clear path from simple lexical metrics to richer model-driven ones
 
 ## Next steps
 
