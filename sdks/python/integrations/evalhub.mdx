@@ -189,7 +189,7 @@ def build_dataset(payload) -> Dataset:
     last_user_message = None
 
     for message in messages:
-        role = message["data"]["type"]
+        role = message["type"]
         content = message["data"]["content"]
 
         if role == "human":
@@ -199,9 +199,10 @@ def build_dataset(payload) -> Dataset:
         if role == "ai" and last_user_message:
             conversation.append(
                 Batch(
-                    qa_id=f"qa-{len(conversation) + 1}",
+                    qa_id=f"{payload['control_id']}-{len(conversation) + 1}",
                     query=last_user_message,
                     assistant=content,
+                    ground_truth_assistant="",
                 )
             )
             last_user_message = None
@@ -217,6 +218,8 @@ def build_dataset(payload) -> Dataset:
         conversation=conversation,
     )
 ```
+
+If your payload stores rich content blocks instead of plain strings, normalize them to plain text before building the `Batch` objects.
 
 The source can be:
 
@@ -273,27 +276,28 @@ A dispatch table is usually cleaner than a long `if/elif` chain.
 
 ```python
 from dataclasses import dataclass
+from your_types import ContextPersistancePayload, ProviderConfig
 
 @dataclass(frozen=True)
 class BenchmarkContext:
     benchmark_id: str
-    payload: dict
-    dataset: object
-    retriever_cls: object
-    config: object
+    payload: ContextPersistancePayload
     provider_id: str
+    config: ProviderConfig
+    retriever_cls: object
+    interaction_count: int
 
-def run_gaussia_benchmark(*, benchmark_id: str, payload: dict, provider_id: str, config: object):
+def run_gaussia_benchmark(*, benchmark_id: str, payload: ContextPersistancePayload, provider_id: str, config: ProviderConfig):
     dataset = build_dataset(payload)
     retriever_cls = build_static_retriever(dataset)
 
     context = BenchmarkContext(
         benchmark_id=benchmark_id,
         payload=payload,
-        dataset=dataset,
-        retriever_cls=retriever_cls,
-        config=config,
         provider_id=provider_id,
+        config=config,
+        retriever_cls=retriever_cls,
+        interaction_count=len(dataset.conversation),
     )
 
     runner = BENCHMARK_RUNNERS.get(benchmark_id)
@@ -323,44 +327,67 @@ This pattern makes it easier to:
 The exact API depends on the EvalHub SDK version, but the integration pattern stays the same.
 
 ```python
-from evalhub.adapter import FrameworkAdapter, EvaluationResult
+from evalhub.adapter import (
+    FrameworkAdapter,
+    JobPhase,
+    JobResults,
+    JobStatus,
+    JobStatusUpdate,
+    MessageInfo,
+)
+from your_bridge import load_context_persistance_payload
+from your_provider import ProviderConfig, run_gaussia_benchmark
 
 class GaussiaEvalHubAdapter(FrameworkAdapter):
-    provider_id = "gaussia"
-
     def run_benchmark_job(self, job_spec, callbacks):
-        benchmark_id = job_spec.benchmark_id
-        payload = job_spec.parameters["context_persistance"]
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.INITIALIZING,
+                progress=0.05,
+                message=MessageInfo(
+                    message="Loading context payload",
+                    message_code="initializing",
+                ),
+            )
+        )
 
-        callbacks.update_status("INITIALIZING")
+        payload = load_context_persistance_payload(
+            job_spec.parameters["context_persistance"]
+        )
+        provider_config = ProviderConfig.from_env()
+
+        callbacks.report_status(
+            JobStatusUpdate(
+                status=JobStatus.RUNNING,
+                phase=JobPhase.RUNNING_EVALUATION,
+                progress=0.35,
+                message=MessageInfo(
+                    message=f"Running {job_spec.benchmark_id}",
+                    message_code="running_evaluation",
+                ),
+            )
+        )
 
         execution = run_gaussia_benchmark(
-            benchmark_id=benchmark_id,
+            benchmark_id=job_spec.benchmark_id,
             payload=payload,
-            provider_id=self.provider_id,
-            config=self.config,
+            provider_id=job_spec.provider_id,
+            config=provider_config,
         )
 
-        callbacks.update_status("RUNNING_EVALUATION")
-
-        artifact = callbacks.create_artifact(
-            name=f"{benchmark_id}.json",
-            data=execution["artifact_payload"],
-            media_type="application/json",
+        return JobResults(
+            id=job_spec.id,
+            benchmark_id=job_spec.benchmark_id,
+            benchmark_index=job_spec.benchmark_index,
+            model_name=job_spec.model.name,
+            results=execution.evaluation_results,
+            overall_score=execution.overall_score,
+            num_examples_evaluated=execution.interaction_count,
         )
-
-        return {
-            "results": [
-                EvaluationResult(
-                    metric_name=result["metric_name"],
-                    metric_value=result["metric_value"],
-                    metric_type=result["metric_type"],
-                )
-                for result in execution["evaluation_results"]
-            ],
-            "artifacts": [artifact],
-        }
 ```
+
+In production, adapters usually add MLflow run logging, richer evaluation metadata, and optional artifact export around this core flow.
 
 ## Register the provider in EvalHub
 
@@ -461,6 +488,18 @@ Use your platform's usual mechanism to inject these values into the provider run
     | `GAUSSIA_TOXICITY_GROUP_PROTOTYPES_JSON` | built-in defaults | Override protected group prototypes |
     | `GAUSSIA_TOXICITY_BAYESIAN_MC_SAMPLES` | `10000` | Bayesian sampling depth |
   </Accordion>
+
+  <Accordion title="MLflow run logging">
+    If your provider logs one MLflow run per benchmark, the common runtime settings are:
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `MLFLOW_TRACKING_URI` | Yes | Tracking server base URL |
+    | `MLFLOW_TRACKING_TOKEN` | No | Direct bearer token |
+    | `MLFLOW_TRACKING_TOKEN_PATH` | No | Path-based token source |
+    | `MLFLOW_TOKEN_PATH` | No | Fallback token path |
+    | `MLFLOW_WORKSPACE` | No | Workspace or tenant header for workspace-aware deployments |
+  </Accordion>
 </AccordionGroup>
 
 <Warning>
@@ -480,7 +519,7 @@ A bridge usually does this:
 - derives interaction count
 - decides benchmark eligibility
 - builds a single `JobSubmissionRequest`
-- deduplicates with a business key
+- deduplicates with a business key such as `stream_id + control_id`
 - submits the job to EvalHub
 
 ### Example job request
