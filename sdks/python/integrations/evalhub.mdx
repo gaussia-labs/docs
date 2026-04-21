@@ -44,9 +44,9 @@ In a typical setup:
 
 <Frame>
   ```mermaid
-  flowchart LR
+  flowchart TB
       source["Source system"]
-      bridge["Optional bridge<br/>Normalize and dedupe"]
+      bridge["Optional bridge"]
       evalhub["EvalHub"]
       provider["Gaussia provider"]
       mlflow["MLflow"]
@@ -65,40 +65,19 @@ In a typical setup:
 <Frame>
   ```mermaid
   flowchart TB
-      subgraph source_plane["Source plane"]
-          source["Application or event source"]
-          bridge["Bridge service"]
-      end
-
-      subgraph evalhub_plane["EvalHub plane"]
-          api["EvalHub API"]
-          scheduler["EvalHub scheduler"]
-      end
-
-      subgraph execution_plane["Execution plane"]
-          job1["Benchmark job<br/>humanity"]
-          job2["Benchmark job<br/>context"]
-          job3["Benchmark job<br/>conversational"]
-          job4["Benchmark job<br/>bias"]
-          job5["Benchmark job<br/>toxicity"]
-      end
-
+      source["Application or event source"]
+      bridge["Bridge service"]
+      evalhub["EvalHub API"]
+      scheduler["EvalHub scheduler"]
+      jobs["Gaussia benchmark jobs"]
       tracking["MLflow"]
 
       source --> bridge
-      bridge --> api
-      api --> scheduler
-      scheduler --> job1
-      scheduler --> job2
-      scheduler --> job3
-      scheduler --> job4
-      scheduler --> job5
-      job1 --> tracking
-      job2 --> tracking
-      job3 --> tracking
-      job4 --> tracking
-      job5 --> tracking
-      api --> tracking
+      bridge --> evalhub
+      evalhub --> scheduler
+      scheduler --> jobs
+      jobs --> tracking
+      evalhub --> tracking
   ```
 </Frame>
 
@@ -106,23 +85,33 @@ In a typical setup:
 
 <Frame>
   ```mermaid
-  sequenceDiagram
-      participant Source as Source system
-      participant Bridge as Bridge
-      participant EvalHub as EvalHub
-      participant Provider as Gaussia provider jobs
-      participant MLflow as MLflow
+  flowchart TB
+      event["Conversation event"]
+      normalize["Normalize and select benchmarks"]
+      submit["Submit one EvalHub job"]
+      fanout["EvalHub fans out benchmarks"]
 
-      Source->>Bridge: conversation payload or event
-      Bridge->>Bridge: normalize and select benchmarks
-      Bridge->>EvalHub: JobSubmissionRequest
-      EvalHub->>Provider: humanity
-      EvalHub->>Provider: context
-      EvalHub->>Provider: conversational
-      EvalHub->>Provider: bias (if eligible)
-      EvalHub->>Provider: toxicity (if eligible)
-      Provider->>MLflow: one run per benchmark
-      Provider->>EvalHub: results and status updates
+      humanity["humanity"]
+      context["context"]
+      conversational["conversational"]
+      bias["bias<br/>if eligible"]
+      toxicity["toxicity<br/>if eligible"]
+
+      runs["One MLflow run per benchmark"]
+
+      event --> normalize
+      normalize --> submit
+      submit --> fanout
+      fanout --> humanity
+      fanout --> context
+      fanout --> conversational
+      fanout --> bias
+      fanout --> toxicity
+      humanity --> runs
+      context --> runs
+      conversational --> runs
+      bias --> runs
+      toxicity --> runs
   ```
 </Frame>
 
