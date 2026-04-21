@@ -455,7 +455,13 @@ class GaussiaEvalHubAdapter(FrameworkAdapter):
 
 ## Register the provider in EvalHub
 
-A practical provider definition looks like this:
+A practical provider definition should stay focused on:
+
+- provider identity
+- runtime image and command
+- benchmark registration
+
+Keep the runtime environment list separate. It is easier to read and easier to adapt to your own secret management model.
 
 ```yaml
 id: gaussia
@@ -469,30 +475,6 @@ runtime:
     - python
     - -m
     - src.provider.adapter
-  k8s:
-    env:
-      - name: GAUSSIA_JUDGE_MODEL
-        value: openai/gpt-oss-20b
-      - name: GAUSSIA_JUDGE_BASE_URL
-        value: https://api.groq.com/openai/v1
-      - name: GAUSSIA_JUDGE_API_KEY
-        value: __SET_ME__
-      - name: GAUSSIA_GUARDIAN_MODEL
-        value: ibm-granite/granite-guardian-3.1-2b
-      - name: GAUSSIA_GUARDIAN_BASE_URL
-        value: __SET_ME__
-      - name: GAUSSIA_GUARDIAN_API_KEY
-        value: __SET_ME__
-      - name: HOME
-        value: /data
-      - name: XDG_CACHE_HOME
-        value: /data/.cache
-      - name: HF_HOME
-        value: /data/.cache/huggingface
-      - name: TRANSFORMERS_CACHE
-        value: /data/.cache/huggingface/transformers
-      - name: SENTENCE_TRANSFORMERS_HOME
-        value: /data/.cache/sentence-transformers
 
 benchmarks:
   - id: humanity
@@ -517,8 +499,63 @@ benchmarks:
       - toxicity_didt
 ```
 
+### Runtime settings
+
+Use your platform's usual mechanism to inject these values into the provider runtime. In Kubernetes, that usually means `env`, `Secret`, `ConfigMap`, or your own rendered provider spec.
+
+<AccordionGroup>
+  <Accordion title="Judge model settings">
+    These settings are required for `context` and `conversational`.
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_JUDGE_MODEL` | Yes | Judge model name |
+    | `GAUSSIA_JUDGE_API_KEY` | Yes | Credentials for the judge endpoint |
+    | `GAUSSIA_JUDGE_BASE_URL` | No | Override for OpenAI-compatible endpoints |
+    | `GAUSSIA_JUDGE_TEMPERATURE` | No | Judge temperature. Default is `0.0` |
+    | `GAUSSIA_JUDGE_USE_STRUCTURED_OUTPUT` | No | Enable structured output. Default is `true` |
+  </Accordion>
+
+  <Accordion title="Guardian settings">
+    These settings are required for `bias`.
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_GUARDIAN_MODEL` | Yes | Guardian model name |
+    | `GAUSSIA_GUARDIAN_API_KEY` | Yes | Credentials for the guardian endpoint |
+    | `GAUSSIA_GUARDIAN_BASE_URL` | No | Override for OpenAI-compatible endpoints |
+    | `GAUSSIA_GUARDIAN_TEMPERATURE` | No | Guardian temperature. Default is `0.01` |
+    | `GAUSSIA_GUARDIAN_LOGPROBS` | No | Enable guardian logprobs. Default is `false` |
+  </Accordion>
+
+  <Accordion title="Writable cache settings">
+    These settings are strongly recommended for `bias` and `toxicity`.
+
+    | Variable | Typical value |
+    | --- | --- |
+    | `HOME` | `/data` |
+    | `XDG_CACHE_HOME` | `/data/.cache` |
+    | `HF_HOME` | `/data/.cache/huggingface` |
+    | `TRANSFORMERS_CACHE` | `/data/.cache/huggingface/transformers` |
+    | `SENTENCE_TRANSFORMERS_HOME` | `/data/.cache/sentence-transformers` |
+  </Accordion>
+
+  <Accordion title="Toxicity tuning">
+    The defaults are usually enough to get started. The most common overrides are:
+
+    | Variable | Default | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_TOXICITY_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model |
+    | `GAUSSIA_TOXICITY_STATISTICAL_MODE` | `frequentist` | Frequentist or Bayesian mode |
+    | `GAUSSIA_TOXICITY_MIN_CLUSTER_SIZE` | `5` | Minimum cluster size |
+    | `GAUSSIA_TOXICITY_UMAP_N_NEIGHBORS` | `15` | UMAP neighborhood size |
+    | `GAUSSIA_TOXICITY_GROUP_PROTOTYPES_JSON` | built-in defaults | Override protected group prototypes |
+    | `GAUSSIA_TOXICITY_BAYESIAN_MC_SAMPLES` | `10000` | Bayesian sampling depth |
+  </Accordion>
+</AccordionGroup>
+
 <Warning>
-  Do not keep placeholder secrets in production. Resolve real values before provider registration, or use the secret injection model your EvalHub runtime supports.
+  Do not keep placeholder secrets in production. Inject real values through your runtime or secret management layer.
 </Warning>
 
 ## Add an optional bridge
