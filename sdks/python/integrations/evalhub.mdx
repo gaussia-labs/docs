@@ -232,40 +232,30 @@ The mapping rule stays the same.
 
 Do not expose every metric just because Gaussia has it. Expose the benchmarks your payload can actually support.
 
-A production-friendly benchmark policy looks like this:
-
-| Benchmark | Primary metric | Always enabled | Extra dependency |
-| --- | --- | --- | --- |
-| `humanity` | `humanity_assistant_emotional_entropy` | Yes | None |
-| `context` | `context_awareness` | Yes | Judge LLM |
-| `conversational` | `conversational_sensibleness` | Yes | Judge LLM |
-| `bias` | `bias_score` | Only with enough interactions | Guardian model |
-| `toxicity` | `toxicity_didt` | Only with enough interactions | Embeddings + clustering |
-
-A common gating strategy is:
+A common integration policy is:
 
 - always include `humanity`, `context`, and `conversational`
 - include `bias` and `toxicity` only when the payload yields at least 5 `human/assistant` pairs
 
 This keeps benchmark execution deterministic and avoids noisy failures on short conversations.
 
+For metric-by-metric details, use the [Metrics overview](/sdks/python/metrics/overview) and the individual metric pages.
+
 ## Know which metrics need models
 
 Not every Gaussia metric has the same runtime profile.
 
-<Tabs>
-  <Tab title="No external model">
-    `humanity` can run without an external judge model in this integration style. It can operate on lexical or deterministic processing of assistant output.
-  </Tab>
+- `humanity` can run without an external judge model
+- `context` and `conversational` need a judge model
+- `bias` needs a guardian-style model
+- `toxicity` needs embeddings and clustering support
 
-  <Tab title="Judge model required">
-    `context` and `conversational` usually require an OpenAI-compatible judge model. Any LangChain-compatible chat model works as long as your provider wires it correctly.
-  </Tab>
+For the full dependency and model setup, see:
 
-  <Tab title="Guardian or embeddings required">
-    `bias` usually requires a guardian-style model. `toxicity` usually requires embeddings plus clustering components such as UMAP and HDBSCAN.
-  </Tab>
-</Tabs>
+- [Metrics overview](/sdks/python/metrics/overview)
+- [LLM judge](/sdks/python/concepts/llm-judge)
+- [Installation](/sdks/python/installation)
+- [Toxicity](/sdks/python/metrics/toxicity)
 
 ## A maintainable provider pattern
 
@@ -477,6 +467,8 @@ Use your platform's usual mechanism to inject these values into the provider run
   Do not keep placeholder secrets in production. Inject real values through your runtime or secret management layer.
 </Warning>
 
+For full runtime dependency details, see [Installation](/sdks/python/installation), [LLM judge](/sdks/python/concepts/llm-judge), and [Toxicity](/sdks/python/metrics/toxicity).
+
 ## Add an optional bridge
 
 You only need a bridge if your upstream system does not already submit EvalHub jobs directly.
@@ -567,32 +559,11 @@ This makes MLflow the strongest benchmark-level audit trail.
 
 ### Writable cache matters
 
-If you run `bias` or `toxicity` in containers, give the pod writable cache directories for:
-
-- Hugging Face
-- Transformers
-- Sentence Transformers
-
-A common setup is:
-
-```bash
-HOME=/data
-XDG_CACHE_HOME=/data/.cache
-HF_HOME=/data/.cache/huggingface
-TRANSFORMERS_CACHE=/data/.cache/huggingface/transformers
-SENTENCE_TRANSFORMERS_HOME=/data/.cache/sentence-transformers
-```
+If you run `bias` or `toxicity` in containers, give the pod writable cache directories for Hugging Face, Transformers, and Sentence Transformers. This matters much more in provider jobs than in a local notebook workflow.
 
 ### `toxicity` needs more resources
 
-`toxicity` is usually the heaviest benchmark because it may involve:
-
-- embeddings
-- dimensionality reduction
-- clustering
-- group profiling
-
-Do not size it like `humanity`.
+`toxicity` is usually the heaviest benchmark because it may involve embeddings, dimensionality reduction, clustering, and group profiling. Do not size it like `humanity`.
 
 ### Some MLflow deployments use Kubernetes identity
 
@@ -611,28 +582,6 @@ If that token expires or loses permission, job creation may fail even when the p
 If `bias` and `toxicity` require enough interactions, gate them before submission. Do not submit benchmarks that you already know cannot run.
 
 That keeps failures meaningful instead of noisy.
-
-## Benchmarks teams often defer
-
-Many teams start with:
-
-- `humanity`
-- `context`
-- `conversational`
-
-and add these later:
-
-- `agentic`
-- `best_of`
-- `regulatory`
-- `vision`
-
-Typical reasons:
-
-- extra ground truth is required
-- multimodal assets are missing
-- tool traces are too shallow
-- corpus connectors or rerankers are not ready
 
 ## A good rollout sequence
 
