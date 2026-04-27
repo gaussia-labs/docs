@@ -21,8 +21,14 @@ Gaussia handles:
 - benchmark results and artifacts
 
 <Note>
-  Gaussia does not ship a built-in, one-click EvalHub integration. The recommended approach is to implement a thin BYOF provider that reads an EvalHub job spec, builds a `gaussia.Dataset`, and dispatches the requested metric.
+  Gaussia ships an optional EvalHub provider adapter in `gaussia[evalhub]`. The adapter reads an EvalHub job spec, builds a `gaussia.Dataset`, dispatches the requested metric, and reports results back to EvalHub.
 </Note>
+
+Install the integration in your provider image:
+
+```bash
+uv add "gaussia[evalhub]"
+```
 
 ## How the integration works
 
@@ -115,7 +121,7 @@ In a typical setup:
 
 ## The contract between EvalHub and Gaussia
 
-A practical pattern is to put the business payload inside each benchmark:
+The preferred contract is to put a native `gaussia.Dataset` inside each benchmark and put operational identifiers in `metadata`:
 
 ```json
 {
@@ -124,15 +130,17 @@ A practical pattern is to put the business payload inside each benchmark:
       "id": "humanity",
       "provider_id": "gaussia",
       "parameters": {
-        "context_persistance": {
-          "assistant_id": "...",
+        "dataset": {
           "session_id": "...",
+          "assistant_id": "...",
+          "language": "english",
+          "context": "...",
+          "conversation": []
+        },
+        "metadata": {
           "stream_id": "...",
           "control_id": "...",
-          "assistant_context": "...",
-          "conversation": {
-            "messages": []
-          }
+          "agentspace_id": "..."
         }
       }
     }
@@ -148,7 +156,7 @@ This gives you:
 - clean benchmark dispatch inside the provider
 
 <Warning>
-  In some integrations the payload key is intentionally spelled `context_persistance`. Keep the spelling that matches your upstream contract and stored job specs.
+  The adapter also accepts the legacy `parameters.context_persistance` payload key for existing integrations. The spelling is intentionally preserved for compatibility with stored job specs.
 </Warning>
 
 ## Build a `gaussia.Dataset` from your payload
@@ -302,72 +310,23 @@ This pattern makes it easier to:
 - keep benchmark-specific requirements local
 - avoid a monolithic adapter function
 
-## A provider adapter skeleton
+## Run the built-in provider adapter
 
-The exact API depends on the EvalHub SDK version, but the integration pattern stays the same.
+Use the packaged EvalHub adapter as the provider entrypoint:
 
-```python
-from evalhub.adapter import (
-    FrameworkAdapter,
-    JobPhase,
-    JobResults,
-    JobStatus,
-    JobStatusUpdate,
-    MessageInfo,
-)
-from your_bridge import load_context_persistance_payload
-from your_provider import ProviderConfig, run_gaussia_benchmark
-
-class GaussiaEvalHubAdapter(FrameworkAdapter):
-    def run_benchmark_job(self, job_spec, callbacks):
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.INITIALIZING,
-                progress=0.05,
-                message=MessageInfo(
-                    message="Loading context payload",
-                    message_code="initializing",
-                ),
-            )
-        )
-
-        payload = load_context_persistance_payload(
-            job_spec.parameters["context_persistance"]
-        )
-        provider_config = ProviderConfig.from_env()
-
-        callbacks.report_status(
-            JobStatusUpdate(
-                status=JobStatus.RUNNING,
-                phase=JobPhase.RUNNING_EVALUATION,
-                progress=0.35,
-                message=MessageInfo(
-                    message=f"Running {job_spec.benchmark_id}",
-                    message_code="running_evaluation",
-                ),
-            )
-        )
-
-        execution = run_gaussia_benchmark(
-            benchmark_id=job_spec.benchmark_id,
-            payload=payload,
-            provider_id=job_spec.provider_id,
-            config=provider_config,
-        )
-
-        return JobResults(
-            id=job_spec.id,
-            benchmark_id=job_spec.benchmark_id,
-            benchmark_index=job_spec.benchmark_index,
-            model_name=job_spec.model.name,
-            results=execution.evaluation_results,
-            overall_score=execution.overall_score,
-            num_examples_evaluated=execution.interaction_count,
-        )
+```bash
+python -m gaussia.integrations.evalhub.adapter
 ```
 
-In production, adapters usually add MLflow run logging, richer evaluation metadata, and optional artifact export around this core flow.
+The adapter supports:
+
+- `humanity`
+- `context`
+- `conversational`
+- `bias`
+- `toxicity`
+
+It reads `GAUSSIA_*` runtime settings from the environment, logs benchmark-level MLflow evidence when `MLFLOW_TRACKING_URI` is configured, and writes OCI artifacts when EvalHub requests an OCI export.
 
 ## Register the provider in EvalHub
 
@@ -390,7 +349,7 @@ runtime:
   command:
     - python
     - -m
-    - src.provider.adapter
+    - gaussia.integrations.evalhub.adapter
 
 benchmarks:
   - id: humanity
@@ -516,21 +475,24 @@ A bridge usually does this:
       "id": "humanity",
       "provider_id": "gaussia",
       "parameters": {
-        "context_persistance": {}
+        "dataset": {},
+        "metadata": {}
       }
     },
     {
       "id": "context",
       "provider_id": "gaussia",
       "parameters": {
-        "context_persistance": {}
+        "dataset": {},
+        "metadata": {}
       }
     },
     {
       "id": "conversational",
       "provider_id": "gaussia",
       "parameters": {
-        "context_persistance": {}
+        "dataset": {},
+        "metadata": {}
       }
     }
   ],
@@ -539,6 +501,8 @@ A bridge usually does this:
   }
 }
 ```
+
+Existing bridges can keep sending `context_persistance` while they migrate to `dataset` and `metadata`.
 
 ## Choose a result model
 
