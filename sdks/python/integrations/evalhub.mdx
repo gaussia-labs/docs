@@ -1,0 +1,587 @@
+---
+title: "Use Gaussia as an EvalHub Provider"
+description: "Run Gaussia as a BYOF provider in EvalHub, map conversational payloads into gaussia.Dataset, and orchestrate benchmark execution with MLflow-backed evidence."
+---
+
+Use this pattern when you want **EvalHub** to orchestrate benchmark execution and **Gaussia** to compute the actual metrics.
+
+EvalHub handles:
+
+- job submission
+- provider registration
+- benchmark fan-out
+- runtime execution in Kubernetes
+- experiment tracking integration
+
+Gaussia handles:
+
+- dataset construction
+- metric execution
+- benchmark-specific validation
+- benchmark results and artifacts
+
+<Note>
+  Gaussia ships an optional EvalHub provider adapter in `gaussia[evalhub]`. The adapter reads an EvalHub job spec, builds a `gaussia.Dataset`, dispatches the requested metric, and reports results back to EvalHub.
+</Note>
+
+Install the integration in your provider image:
+
+```bash
+uv add "gaussia[evalhub]"
+```
+
+## How the integration works
+
+In a typical setup:
+
+1. Your system submits an EvalHub evaluation job.
+2. The job contains one or more benchmarks with `provider_id: "gaussia"`.
+3. EvalHub launches one runtime job per benchmark.
+4. The Gaussia provider reads the benchmark payload from `JobSpec.parameters`.
+5. The provider builds a `gaussia.Dataset`.
+6. The provider runs the requested benchmark.
+7. The provider reports benchmark status back to EvalHub.
+8. The provider returns structured results and artifacts.
+9. If MLflow is enabled, benchmark evidence is stored there as well.
+
+### Logical flow
+
+<Frame>
+  ```mermaid
+  flowchart TB
+      source["Source system"]
+      bridge["Optional bridge"]
+      evalhub["EvalHub"]
+      provider["Gaussia provider"]
+      mlflow["MLflow"]
+
+      source --> bridge
+      bridge --> evalhub
+      evalhub --> provider
+      provider --> evalhub
+      provider --> mlflow
+      evalhub --> mlflow
+  ```
+</Frame>
+
+### Deployment view
+
+<Frame>
+  ```mermaid
+  flowchart TB
+      source["Application or event source"]
+      bridge["Bridge service"]
+      evalhub["EvalHub API"]
+      scheduler["EvalHub scheduler"]
+      jobs["Gaussia benchmark jobs"]
+      tracking["MLflow"]
+
+      source --> bridge
+      bridge --> evalhub
+      evalhub --> scheduler
+      scheduler --> jobs
+      jobs --> tracking
+      evalhub --> tracking
+  ```
+</Frame>
+
+### One event to many benchmarks
+
+<Frame>
+  ```mermaid
+  flowchart TB
+      event["Conversation event"]
+      normalize["Normalize and select benchmarks"]
+      submit["Submit one EvalHub job"]
+      fanout["EvalHub fans out benchmarks"]
+
+      humanity["humanity"]
+      context["context"]
+      conversational["conversational"]
+      bias["bias<br/>if eligible"]
+      toxicity["toxicity<br/>if eligible"]
+
+      runs["One MLflow run per benchmark"]
+
+      event --> normalize
+      normalize --> submit
+      submit --> fanout
+      fanout --> humanity
+      fanout --> context
+      fanout --> conversational
+      fanout --> bias
+      fanout --> toxicity
+      humanity --> runs
+      context --> runs
+      conversational --> runs
+      bias --> runs
+      toxicity --> runs
+  ```
+</Frame>
+
+## The contract between EvalHub and Gaussia
+
+The preferred contract is to put a native `gaussia.Dataset` inside each benchmark and put operational identifiers in `metadata`:
+
+```json
+{
+  "benchmarks": [
+    {
+      "id": "humanity",
+      "provider_id": "gaussia",
+      "parameters": {
+        "dataset": {
+          "session_id": "...",
+          "assistant_id": "...",
+          "language": "english",
+          "context": "...",
+          "conversation": []
+        },
+        "metadata": {
+          "stream_id": "...",
+          "control_id": "...",
+          "agentspace_id": "..."
+        }
+      }
+    }
+  ]
+}
+```
+
+This gives you:
+
+- benchmark-local business input
+- one EvalHub job with many Gaussia benchmarks
+- a simple provider contract
+- clean benchmark dispatch inside the provider
+
+<Warning>
+  The adapter also accepts the legacy `parameters.context_persistance` payload key for existing integrations. The spelling is intentionally preserved for compatibility with stored job specs.
+</Warning>
+
+## Build a `gaussia.Dataset` from your payload
+
+The most important design step is not the EvalHub side. It is the mapping from your source payload into `gaussia.Dataset`.
+
+Gaussia expects a conversational structure with:
+
+- `session_id`
+- `assistant_id`
+- `context`
+- `conversation: list[Batch]`
+
+In many integrations, the provider derives `human/assistant` pairs from a persisted message list.
+
+### Minimal mapping example
+
+```python
+from gaussia.schemas.common import Batch, Dataset
+
+def build_dataset(payload) -> Dataset:
+    messages = payload["conversation"]["messages"]
+    conversation = []
+    last_user_message = None
+
+    for message in messages:
+        role = message["type"]
+        content = message["data"]["content"]
+
+        if role == "human":
+            last_user_message = content
+            continue
+
+        if role == "ai" and last_user_message:
+            conversation.append(
+                Batch(
+                    qa_id=f"{payload['control_id']}-{len(conversation) + 1}",
+                    query=last_user_message,
+                    assistant=content,
+                    ground_truth_assistant="",
+                )
+            )
+            last_user_message = None
+
+    if not conversation:
+        raise ValueError("No human/assistant pairs could be derived from the payload")
+
+    return Dataset(
+        session_id=payload["session_id"],
+        assistant_id=payload["assistant_id"],
+        language="english",
+        context=payload["assistant_context"],
+        conversation=conversation,
+    )
+```
+
+If your payload stores rich content blocks instead of plain strings, normalize them to plain text before building the `Batch` objects.
+
+The source can be:
+
+- a fixture
+- an HTTP request
+- an event bus message
+- a replay from storage
+- an audit pipeline
+
+The mapping rule stays the same.
+
+## Choose benchmarks and runtime dependencies
+
+Expose only the benchmarks your payload can actually support.
+
+A common policy is:
+
+- always include `humanity`, `context`, and `conversational`
+- include `bias` and `toxicity` only when the payload yields at least 5 `human/assistant` pairs
+
+In practice:
+
+- `humanity` does not need an external judge model
+- `context` and `conversational` need a judge model
+- `bias` needs a guardian-style model
+- `toxicity` needs embeddings and clustering support
+
+For metric-by-metric setup, see:
+
+- [Metrics overview](/sdks/python/metrics/overview)
+- [LLM judge](/sdks/python/concepts/llm-judge)
+- [Installation](/sdks/python/installation)
+- [Toxicity](/sdks/python/metrics/toxicity)
+
+## A maintainable provider pattern
+
+Keep these concerns separate:
+
+- payload parsing and dataset construction
+- benchmark dispatch
+- benchmark execution
+- artifact serialization
+- MLflow logging, if you use it
+
+A dispatch table is usually cleaner than a long `if/elif` chain.
+
+### Example dispatch pattern
+
+```python
+from dataclasses import dataclass
+from your_types import ContextPersistancePayload, ProviderConfig
+
+@dataclass(frozen=True)
+class BenchmarkContext:
+    benchmark_id: str
+    payload: ContextPersistancePayload
+    provider_id: str
+    config: ProviderConfig
+    retriever_cls: object
+    interaction_count: int
+
+def run_gaussia_benchmark(*, benchmark_id: str, payload: ContextPersistancePayload, provider_id: str, config: ProviderConfig):
+    dataset = build_dataset(payload)
+    retriever_cls = build_static_retriever(dataset)
+
+    context = BenchmarkContext(
+        benchmark_id=benchmark_id,
+        payload=payload,
+        provider_id=provider_id,
+        config=config,
+        retriever_cls=retriever_cls,
+        interaction_count=len(dataset.conversation),
+    )
+
+    runner = BENCHMARK_RUNNERS.get(benchmark_id)
+    if runner is None:
+        raise ValueError(f"Unsupported benchmark: {benchmark_id}")
+
+    return runner(context)
+
+BENCHMARK_RUNNERS = {
+    "humanity": run_humanity,
+    "context": run_context,
+    "conversational": run_conversational,
+    "bias": run_bias,
+    "toxicity": run_toxicity,
+}
+```
+
+This pattern makes it easier to:
+
+- add benchmarks
+- test each benchmark in isolation
+- keep benchmark-specific requirements local
+- avoid a monolithic adapter function
+
+## Run the built-in provider adapter
+
+Use the packaged EvalHub adapter as the provider entrypoint:
+
+```bash
+python -m gaussia.integrations.evalhub.adapter
+```
+
+The adapter supports:
+
+- `humanity`
+- `context`
+- `conversational`
+- `bias`
+- `toxicity`
+
+It reads `GAUSSIA_*` runtime settings from the environment, logs benchmark-level MLflow evidence when `MLFLOW_TRACKING_URI` is configured, and writes OCI artifacts when EvalHub requests an OCI export.
+
+## Register the provider in EvalHub
+
+A practical provider definition should stay focused on:
+
+- provider identity
+- runtime image and command
+- benchmark registration
+
+Keep the runtime environment list separate. It is easier to read and easier to adapt to your own secret management model.
+
+```yaml
+id: gaussia
+name: gaussia
+description: Gaussia-based conversational evaluation provider
+framework: custom
+runtime:
+  type: kubernetes
+  image: docker.io/your-org/gaussia-provider:latest
+  command:
+    - python
+    - -m
+    - gaussia.integrations.evalhub.adapter
+
+benchmarks:
+  - id: humanity
+    provider_id: gaussia
+    metrics:
+      - humanity_assistant_emotional_entropy
+  - id: context
+    provider_id: gaussia
+    metrics:
+      - context_awareness
+  - id: conversational
+    provider_id: gaussia
+    metrics:
+      - conversational_sensibleness
+  - id: bias
+    provider_id: gaussia
+    metrics:
+      - bias_score
+  - id: toxicity
+    provider_id: gaussia
+    metrics:
+      - toxicity_didt
+```
+
+### Runtime settings
+
+Use your platform's usual mechanism to inject these values into the provider runtime. In Kubernetes, that usually means `env`, `Secret`, `ConfigMap`, or your own rendered provider spec.
+
+<AccordionGroup>
+  <Accordion title="Judge model settings">
+    These settings are required for `context` and `conversational`.
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_JUDGE_MODEL` | Yes | Judge model name |
+    | `GAUSSIA_JUDGE_API_KEY` | Yes | Credentials for the judge endpoint |
+    | `GAUSSIA_JUDGE_BASE_URL` | No | Override for OpenAI-compatible endpoints |
+    | `GAUSSIA_JUDGE_TEMPERATURE` | No | Judge temperature. Default is `0.0` |
+    | `GAUSSIA_JUDGE_USE_STRUCTURED_OUTPUT` | No | Enable structured output. Default is `true` |
+  </Accordion>
+
+  <Accordion title="Guardian settings">
+    These settings are required for `bias`.
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_GUARDIAN_MODEL` | Yes | Guardian model name |
+    | `GAUSSIA_GUARDIAN_API_KEY` | Yes | Credentials for the guardian endpoint |
+    | `GAUSSIA_GUARDIAN_BASE_URL` | No | Override for OpenAI-compatible endpoints |
+    | `GAUSSIA_GUARDIAN_TEMPERATURE` | No | Guardian temperature. Default is `0.01` |
+    | `GAUSSIA_GUARDIAN_LOGPROBS` | No | Enable guardian logprobs. Default is `false` |
+  </Accordion>
+
+  <Accordion title="Writable cache settings">
+    These settings are strongly recommended for `bias` and `toxicity`.
+
+    | Variable | Typical value |
+    | --- | --- |
+    | `HOME` | `/data` |
+    | `XDG_CACHE_HOME` | `/data/.cache` |
+    | `HF_HOME` | `/data/.cache/huggingface` |
+    | `TRANSFORMERS_CACHE` | `/data/.cache/huggingface/transformers` |
+    | `SENTENCE_TRANSFORMERS_HOME` | `/data/.cache/sentence-transformers` |
+  </Accordion>
+
+  <Accordion title="Toxicity tuning">
+    The defaults are usually enough to get started. The most common overrides are:
+
+    | Variable | Default | Purpose |
+    | --- | --- | --- |
+    | `GAUSSIA_TOXICITY_EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model |
+    | `GAUSSIA_TOXICITY_STATISTICAL_MODE` | `frequentist` | Frequentist or Bayesian mode |
+    | `GAUSSIA_TOXICITY_MIN_CLUSTER_SIZE` | `5` | Minimum cluster size |
+    | `GAUSSIA_TOXICITY_UMAP_N_NEIGHBORS` | `15` | UMAP neighborhood size |
+    | `GAUSSIA_TOXICITY_GROUP_PROTOTYPES_JSON` | built-in defaults | Override protected group prototypes |
+    | `GAUSSIA_TOXICITY_BAYESIAN_MC_SAMPLES` | `10000` | Bayesian sampling depth |
+  </Accordion>
+
+  <Accordion title="MLflow run logging">
+    If your provider logs one MLflow run per benchmark, the common runtime settings are:
+
+    | Variable | Required | Purpose |
+    | --- | --- | --- |
+    | `MLFLOW_TRACKING_URI` | Yes | Tracking server base URL |
+    | `MLFLOW_TRACKING_TOKEN` | No | Direct bearer token |
+    | `MLFLOW_TRACKING_TOKEN_PATH` | No | Path-based token source |
+    | `MLFLOW_TOKEN_PATH` | No | Fallback token path |
+    | `MLFLOW_WORKSPACE` | No | Workspace or tenant header for workspace-aware deployments |
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Do not keep placeholder secrets in production. Inject real values through your runtime or secret management layer.
+</Warning>
+
+For full runtime dependency details, see [Installation](/sdks/python/installation), [LLM judge](/sdks/python/concepts/llm-judge), and [Toxicity](/sdks/python/metrics/toxicity).
+
+## Add an optional bridge
+
+You only need a bridge if your upstream system does not already submit EvalHub jobs directly.
+
+A bridge usually does this:
+
+- accepts an incoming event or payload
+- normalizes the payload shape
+- derives interaction count
+- decides benchmark eligibility
+- builds a single `JobSubmissionRequest`
+- deduplicates with a business key such as `stream_id + control_id`
+- submits the job to EvalHub
+
+### Example job request
+
+```json
+{
+  "name": "conversation-eval-123",
+  "model": {
+    "name": "persisted-conversation",
+    "url": "https://example.invalid/persisted-conversation"
+  },
+  "benchmarks": [
+    {
+      "id": "humanity",
+      "provider_id": "gaussia",
+      "parameters": {
+        "dataset": {},
+        "metadata": {}
+      }
+    },
+    {
+      "id": "context",
+      "provider_id": "gaussia",
+      "parameters": {
+        "dataset": {},
+        "metadata": {}
+      }
+    },
+    {
+      "id": "conversational",
+      "provider_id": "gaussia",
+      "parameters": {
+        "dataset": {},
+        "metadata": {}
+      }
+    }
+  ],
+  "experiment": {
+    "name": "conversation-quality"
+  }
+}
+```
+
+Existing bridges can keep sending `context_persistance` while they migrate to `dataset` and `metadata`.
+
+## Choose a result model
+
+A robust setup looks like this:
+
+- one EvalHub evaluation job per source event
+- one provider benchmark execution per benchmark
+- one MLflow run per benchmark, if benchmark-level evidence matters to you
+
+This gives you:
+
+- one top-level orchestration record
+- clear per-benchmark isolation
+- traceable benchmark metrics
+- strong auditability in MLflow
+
+## Understand how MLflow fits in
+
+A common pattern is:
+
+- EvalHub owns experiment-level orchestration
+- the Gaussia provider logs benchmark-level evidence
+
+That means each benchmark run can carry tags like:
+
+- `benchmark_id`
+- `evaluation_job_id`
+- `assistant_id`
+- `session_id`
+- `stream_id`
+- `control_id`
+- `agentspace_id`
+
+This makes MLflow the strongest benchmark-level audit trail.
+
+## Production notes
+
+### Writable cache matters
+
+If you run `bias` or `toxicity` in containers, give the pod writable cache directories for Hugging Face, Transformers, and Sentence Transformers. This matters much more in provider jobs than in a local notebook workflow.
+
+### `toxicity` needs more resources
+
+`toxicity` is usually the heaviest benchmark because it may involve embeddings, dimensionality reduction, clustering, and group profiling. Do not size it like `humanity`.
+
+### Some MLflow deployments use Kubernetes identity
+
+In some OpenShift AI and Open Data Hub deployments, MLflow is authenticated with Kubernetes or OpenShift identity instead of a standalone API token.
+
+That means your runtime may need:
+
+- a valid projected ServiceAccount token
+- workspace RBAC
+- a workspace header such as `X-MLFLOW-WORKSPACE`
+
+If that token expires or loses permission, job creation may fail even when the provider code is correct.
+
+### Keep benchmark eligibility deterministic
+
+If `bias` and `toxicity` require enough interactions, gate them before submission. Do not submit benchmarks that you already know cannot run.
+
+That keeps failures meaningful instead of noisy.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Python SDK quickstart" icon="rocket" href="/sdks/python/quickstart">
+    Start with the Gaussia SDK basics before wiring EvalHub.
+  </Card>
+
+  <Card title="Gaussia architecture" icon="diagram-project" href="/sdks/python/concepts/architecture">
+    Understand retrievers, datasets, and the core processing model.
+  </Card>
+
+  <Card title="Context metric" icon="brain" href="/sdks/python/metrics/context">
+    Learn how judge-based conversational evaluation works.
+  </Card>
+
+  <Card title="Toxicity metric" icon="triangle-exclamation" href="/sdks/python/metrics/toxicity">
+    Review the heaviest runtime dependency in a typical EvalHub integration.
+  </Card>
+</CardGroup>

@@ -63,6 +63,12 @@
             ]
           },
           {
+            "group": "Integrations",
+            "pages": [
+              "sdks/python/integrations/evalhub"
+            ]
+          },
+          {
             "group": "Advanced",
             "pages": [
               "sdks/python/advanced/generators",
