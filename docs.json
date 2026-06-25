@@ -71,6 +71,41 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "TypeScript SDK",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "sdks/typescript/index",
+              "sdks/typescript/installation",
+              "sdks/typescript/quickstart"
+            ]
+          },
+          {
+            "group": "Core concepts",
+            "pages": [
+              "sdks/typescript/concepts/architecture",
+              "sdks/typescript/concepts/evaluators",
+              "sdks/typescript/concepts/language-models",
+              "sdks/typescript/concepts/schemas"
+            ]
+          },
+          {
+            "group": "Generators",
+            "pages": [
+              "sdks/typescript/generators/overview"
+            ]
+          },
+          {
+            "group": "Prompt optimization",
+            "pages": [
+              "sdks/typescript/prompt-optimizer/gepa",
+              "sdks/typescript/prompt-optimizer/logprob-evaluator"
+            ]
+          }
+        ]
       }
     ],
     "global": {
