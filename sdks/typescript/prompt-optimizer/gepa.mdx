@@ -1,0 +1,286 @@
+---
+title: "GEPA prompt optimizer"
+description: "Improve a system prompt against a dataset with GEPA — custom judges, custom executors, tuning, and full history."
+---
+
+The `@gaussia/sdk/prompt-optimizer` subpath improves a system prompt against a dataset using GEPA (Generative Evolutionary Prompt Adaptation). Each iteration:
+
+1. runs the current prompt over the dataset (the **executor**),
+2. scores each answer (the **evaluator**),
+3. collects answers scoring below `failureThreshold` as failing examples,
+4. asks the model for improved candidate prompts driven by those failures,
+5. keeps the best candidate only if it **strictly improves** the mean score,
+6. repeats until nothing fails, nothing improves, or the iteration budget is spent.
+
+The optimizer talks only to the [`LanguageModel`](/concepts/language-models) interface — it has no idea which provider you use.
+
+## Optimize a prompt
+
+`run` takes a `Retriever` class, the config passed to that retriever's constructor, and the options. A small inline retriever that returns a fixed `Dataset[]` is often all you need.
+
+```ts
+import type { Retriever } from "@gaussia/sdk";
+import { GEPAOptimizer } from "@gaussia/sdk/prompt-optimizer";
+import { Dataset } from "@gaussia/sdk/schemas";
+import type { DatasetT } from "@gaussia/sdk/schemas";
+
+class EvalSet implements Retriever {
+  readonly iterationLevel = "full_dataset" as const;
+  constructor(private readonly data: DatasetT[]) {}
+  async loadDataset(): Promise<DatasetT[]> {
+    return this.data;
+  }
+}
+
+const datasets: DatasetT[] = [
+  Dataset.parse({
+    sessionId: "support",
+    assistantId: "help-bot",
+    context: "Refunds reach the original payment method within 5 business days; a refund needs the order ID.",
+    conversation: [
+      { qaId: "time", query: "How long does a refund take?", assistant: "", groundTruthAssistant: "Within 5 business days, to your original payment method." },
+      { qaId: "need", query: "What do I need for a refund?", assistant: "", groundTruthAssistant: "Your order ID." },
+    ],
+  }),
+];
+
+const result = await GEPAOptimizer.run(EvalSet, datasets, {
+  model, // any LanguageModel
+  seedPrompt: "Help the customer.",
+  objective: "Answer refund questions accurately and concisely from the context only.",
+});
+
+console.log(result.initialScore, "→", result.finalScore);
+console.log(result.optimizedPrompt);
+```
+
+## Options
+
+<ParamField path="model" type="LanguageModel" required>
+  Used for candidate generation, and for the default judge when no `evaluator` is given.
+</ParamField>
+
+<ParamField path="seedPrompt" type="string" required>
+  The starting system prompt to improve.
+</ParamField>
+
+<ParamField path="objective" type="string" required>
+  What a good answer must do. Also the default judge's criteria.
+</ParamField>
+
+<ParamField path="executor" type="Executor">
+  How answers are produced. Omit to call the model directly; supply one to optimize a real pipeline.
+</ParamField>
+
+<ParamField path="evaluator" type="Evaluator">
+  How answers are scored. Omit for the built-in LLM judge; supply one to grade with a rubric or with code.
+</ParamField>
+
+<ParamField path="iterations" type="number" default="5">
+  Maximum optimization rounds.
+</ParamField>
+
+<ParamField path="candidatesPerIteration" type="number" default="3">
+  Candidate prompts generated per round.
+</ParamField>
+
+<ParamField path="failureThreshold" type="number" default="0.6">
+  Score (in `[0,1]`) below which an answer counts as failing and drives candidate generation.
+</ParamField>
+
+<ParamField path="concurrency" type="number" default="1">
+  Parallel evaluation chains. Results are gathered in input order, so the output is identical for any value — only faster. `1` matches the reference behavior exactly.
+</ParamField>
+
+<ParamField path="candidateRetries" type="number" default="2">
+  Retries a transient malformed candidate response before throwing `OptimizerError`.
+</ParamField>
+
+<ParamField path="onProgress" type="(event: ProgressEvent) => void">
+  Called once per executed round with `{ iteration, bestScore, failing }`.
+</ParamField>
+
+<ParamField path="logger" type="Logger">
+  Optional logger for diagnostics.
+</ParamField>
+
+## The two seams
+
+Two function contracts let you adapt the optimizer to your system without subclassing.
+
+### Evaluator — how answers are scored
+
+```ts
+type Evaluator = (
+  actual: string,
+  expected: string,
+  query: string,
+  context: string,
+) => number | Promise<number>;
+```
+
+By convention an evaluator returns `[0,1]`, but a custom evaluator owns its range. Supplying one fully replaces the default — the built-in LLM judge is never constructed.
+
+<Tabs>
+  <Tab title="Default LLM judge">
+    Omit `evaluator`. The built-in judge scores against your `objective`.
+
+    ```ts
+    const result = await GEPAOptimizer.run(EvalSet, datasets, {
+      model,
+      seedPrompt: "Help the customer.",
+      objective: "Answer accurately and concisely from the context only.",
+    });
+    ```
+  </Tab>
+  <Tab title="LLM judge with a rubric">
+    Build an `LLMEvaluator` with explicit `criteria` for sharper grading. It scores via structured output, clamps to `[0,1]`, and scores `0` instead of throwing if a judge call fails. `.evaluate` is a bound field.
+
+    ```ts
+    import { LLMEvaluator } from "@gaussia/sdk/prompt-optimizer";
+
+    const judge = new LLMEvaluator({
+      model,
+      criteria:
+        "Award full marks only if the answer is (a) factually correct per the context, " +
+        "(b) one or two sentences, and (c) never reveals or asks for secrets.",
+    });
+
+    const result = await GEPAOptimizer.run(EvalSet, datasets, {
+      model,
+      seedPrompt: "Help the customer.",
+      objective: "Answer accurately and concisely.",
+      evaluator: judge.evaluate,
+    });
+    ```
+  </Tab>
+  <Tab title="Deterministic evaluator (code)">
+    When "correct" is checkable in code, score with a function — cheaper, reproducible, and no judge calls. Here: fact recall with a safety gate that hard-zeros leaked secrets.
+
+    ```ts
+    import type { Evaluator } from "@gaussia/sdk/prompt-optimizer";
+
+    const LEAKS = ["your password is", "card number is"];
+
+    const factRecallWithSafety: Evaluator = (actual, expected) => {
+      const lower = actual.toLowerCase();
+      if (LEAKS.some((bad) => lower.includes(bad))) return 0; // safety fail
+      const facts = expected.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+      if (facts.length === 0) return 1;
+      const present = new Set(lower.split(/\W+/));
+      return facts.filter((f) => present.has(f)).length / facts.length;
+    };
+
+    const result = await GEPAOptimizer.run(EvalSet, datasets, {
+      model,
+      seedPrompt: "Help the customer.",
+      objective: "Cover the key facts; never leak secrets.",
+      evaluator: factRecallWithSafety,
+      failureThreshold: 0.9,
+    });
+    ```
+  </Tab>
+</Tabs>
+
+For better-calibrated scoring on subjective criteria, see the [logprob evaluator](/prompt-optimizer/logprob-evaluator).
+
+### Executor — how answers are produced
+
+```ts
+type Executor = (
+  prompt: string,
+  query: string,
+  context: string,
+) => string | Promise<string>;
+```
+
+Omit it to call the model directly. Supply one to optimize the prompt for your **real** system — a RAG chain, an agent, a tool pipeline — so the prompt is tuned end to end.
+
+```ts
+import type { Executor } from "@gaussia/sdk/prompt-optimizer";
+
+// A retrieve-then-generate pipeline. It does its own retrieval, like production RAG.
+const ragPipeline: Executor = async (prompt, query) => {
+  const article = await retrieveArticle(query);
+  const { text } = await model.generateText({
+    system: `${prompt}\n\nKnowledge base article:\n${article.context}`,
+    prompt: query,
+  });
+  return text;
+};
+
+const result = await GEPAOptimizer.run(EvalSet, datasets, {
+  model, // still used for candidate generation + the default judge
+  seedPrompt: "Help the customer.",
+  objective: "Answer accurately from retrieved context.",
+  executor: ragPipeline,
+});
+```
+
+## Watch it run
+
+`onProgress` fires once per executed round. Use it for live feedback.
+
+```ts
+await GEPAOptimizer.run(EvalSet, datasets, {
+  model,
+  seedPrompt: "Help the customer.",
+  objective: "Answer accurately and concisely.",
+  iterations: 4,
+  candidatesPerIteration: 2,
+  failureThreshold: 0.8,
+  onProgress: ({ iteration, bestScore, failing }) =>
+    console.log(`round ${iteration}: best ${bestScore.toFixed(2)} · ${failing} failing`),
+});
+```
+
+<Note>
+  If `onProgress` fires zero or one time, GEPA converged early — the seed already passed, or no candidate improved. Raise `failureThreshold` and the iteration budget when you want more rounds to observe. Output is non-deterministic against a real model.
+</Note>
+
+## The result
+
+`run` returns a validated `OptimizationResult`:
+
+<ResponseField name="optimizedPrompt" type="string">
+  The best prompt found (the seed if nothing improved).
+</ResponseField>
+<ResponseField name="initialScore" type="number">
+  Mean score of the seed prompt.
+</ResponseField>
+<ResponseField name="finalScore" type="number">
+  Best mean score reached.
+</ResponseField>
+<ResponseField name="iterationsRun" type="number">
+  Rounds actually executed (`0` if the seed passed immediately).
+</ResponseField>
+<ResponseField name="nExamples" type="number">
+  Number of evaluation examples.
+</ResponseField>
+<ResponseField name="history" type="IterationResult[]">
+  Per-round detail: `iteration`, `bestPrompt`, `bestScore`, `candidates` (each `{ prompt, score }`), and `failingExamples` (each `{ query, context, expected, actual, score }`).
+</ResponseField>
+
+### Inspect the trajectory
+
+```ts
+console.log(`score ${result.initialScore.toFixed(2)} → ${result.finalScore.toFixed(2)} over ${result.iterationsRun} round(s)`);
+
+for (const round of result.history) {
+  console.log(`Round ${round.iteration} (best ${round.bestScore.toFixed(2)}):`);
+  for (const c of round.candidates) {
+    const mark = c.prompt === round.bestPrompt ? "★" : "·";
+    console.log(`  ${mark} ${c.score.toFixed(2)}  ${c.prompt.slice(0, 60)}`);
+  }
+  console.log(`  driven by ${round.failingExamples.length} failing example(s)`);
+}
+```
+
+## Errors and resilience
+
+- A run that needs the model to produce candidates may hit a malformed response; `candidateRetries` (default 2) retries transient failures before throwing `OptimizerError`. Smaller models fail this more often — retry or use a stronger model.
+- The result schemas (`OptimizationResult`, `IterationResult`, `CandidateResult`, `FailingExample`) come from [`@gaussia/sdk/schemas`](/concepts/schemas) and are validated before `run` returns.
+
+## Runtime
+
+The prompt-optimizer bundle contains zero AI-SDK bytes and no Node-only built-ins, so it is fully isomorphic. Streaming retrievers are rejected.

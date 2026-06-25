@@ -1,0 +1,65 @@
+---
+title: "Installation"
+description: "Install @gaussia/sdk and its peer dependencies for Node or the browser."
+---
+
+## Requirements
+
+- Node 20 or later (LTS). The SDK is tested against Node 20 and Node 22.
+- Or a modern browser with native ESM, top-level await, `fetch`, and `AbortController`. No polyfills are bundled.
+
+## Install the package
+
+<CodeGroup>
+
+```bash pnpm
+pnpm add @gaussia/sdk
+```
+
+```bash npm
+npm install @gaussia/sdk
+```
+
+```bash yarn
+yarn add @gaussia/sdk
+```
+
+</CodeGroup>
+
+## Peer dependencies
+
+`@gaussia/sdk` declares `zod` and `ai` as peer dependencies so they resolve to a single copy in your application.
+
+```bash
+pnpm add zod    # required at runtime
+pnpm add ai     # optional — only if you use @gaussia/sdk/adapters/ai-sdk
+```
+
+- `zod` (`^3`) is required. Public types are derived from Zod schemas, and schema parsing runs at runtime.
+- `ai` (`^5`) is an optional peer. Install it only if you import `@gaussia/sdk/adapters/ai-sdk`. If you implement the `LanguageModel` contract yourself, you do not need `ai`.
+
+<Note>
+  Importing only `@gaussia/sdk` resolves a bundle containing zero bytes from the adapter subpath or the `ai` peer. You pay for an adapter only when you import it.
+</Note>
+
+## Provider package
+
+The Vercel AI SDK adapter wraps a provider model. Install the provider you use alongside `ai`:
+
+```bash
+pnpm add @ai-sdk/openai
+```
+
+## Verify the install
+
+```ts
+import { Gaussia } from "@gaussia/sdk";
+
+console.log(typeof Gaussia); // "function"
+```
+
+## Next steps
+
+<Card title="Quickstart" icon="play" href="/quickstart">
+  Run a first evaluation against a small dataset.
+</Card>

@@ -1,0 +1,110 @@
+---
+title: "Language models & adapters"
+description: "The vendor-neutral LanguageModel contract and the adapters that satisfy it."
+---
+
+Every part of the SDK that needs a model — [evaluators](/concepts/evaluators), [generators](/generators/overview), the [prompt optimizer](/prompt-optimizer/gepa) — talks to the `LanguageModel` interface, never to a vendor client. You supply a concrete implementation through an **adapter**. This keeps the core free of vendor SDKs, keeps browser bundles small, and lets you switch providers in one line.
+
+## The LanguageModel contract
+
+```ts
+interface LanguageModel {
+  generateText(input: GenerateTextInput): Promise<GenerateTextOutput>;
+  generateObject<TSchema extends ZodType>(
+    input: GenerateObjectInput<TSchema>,
+  ): Promise<GenerateObjectOutput<z.infer<TSchema>>>;
+}
+```
+
+### generateText
+
+Produces free-form text. The input accepts a `prompt`, an optional `system` string, an optional `AbortSignal`, and an optional `logprobs` flag.
+
+```ts
+const { text, logprobs } = await model.generateText({
+  prompt: "Summarize the context in one sentence.",
+  system: "You are concise.",
+  logprobs: 10,
+});
+```
+
+For `logprobs`, pass a **number** to request that many top alternatives per token, or `true` for the chosen tokens with no alternatives. When the provider returns them, `logprobs` is an array of `TokenLogprob` (`token`, `logprob`, optional `topLogprobs`). The [logprob evaluator](/prompt-optimizer/logprob-evaluator) builds on this.
+
+### generateObject
+
+Produces a structured value validated against a Zod schema. The result `object` is typed as `z.infer` of the schema you pass.
+
+```ts
+import { z } from "zod";
+
+const { object } = await model.generateObject({
+  prompt: "Score this answer from 0 to 1.",
+  schema: z.object({ score: z.number() }),
+});
+// object.score is a number
+```
+
+## Model adapters
+
+An adapter is anything that satisfies `LanguageModel`. Adapters live in their own subpaths so the core never imports a vendor SDK — you pay for an adapter only when you import it.
+
+### Built-in: the Vercel AI SDK adapter
+
+`@gaussia/sdk/adapters/ai-sdk` is the **only built-in adapter today**. `createAiSdkAdapter` wraps any Vercel AI SDK model so it satisfies `LanguageModel`. It delegates `generateObject` to the AI SDK's structured output and maps provider log probabilities into the vendor-neutral `TokenLogprob[]` shape, so downstream code never depends on a provider's metadata format.
+
+```ts
+import { createAiSdkAdapter } from "@gaussia/sdk/adapters/ai-sdk";
+import { openai } from "@ai-sdk/openai";
+
+const model = createAiSdkAdapter(openai("gpt-4o-mini"));
+```
+
+Install the `ai` peer and a provider package to use it:
+
+```bash
+pnpm add ai @ai-sdk/openai
+```
+
+<Info>
+  `ai@^5` pairs with `@ai-sdk/openai@^2`. Because the AI SDK supports many providers, switching is a one-line change at the adapter call site — anything `ai` can construct (OpenAI, Anthropic, and others) works, and the rest of your code is untouched.
+</Info>
+
+### Bring your own adapter
+
+Any object satisfying `LanguageModel` works — no special registration. This is how you connect an internal proxy, a self-hosted model, Bedrock, or a provider without an AI SDK package: implement the two methods and pass it anywhere a model is expected.
+
+```ts
+import type { LanguageModel } from "@gaussia/sdk";
+
+const myAdapter: LanguageModel = {
+  async generateText({ prompt, system, signal }) {
+    const text = await callMyBackend({ prompt, system, signal });
+    return { text };
+  },
+  async generateObject({ prompt, schema, system, signal }) {
+    const raw = await callMyBackend({ prompt, system, signal, json: true });
+    return { object: schema.parse(raw) }; // validate against the caller's schema
+  },
+};
+```
+
+Returning logprobs is optional. If your `generateText` provides them, the [logprob evaluator](/prompt-optimizer/logprob-evaluator) uses them; if not, it falls back to a structured judge.
+
+<Tip>
+  For tests, implement a deterministic in-memory `LanguageModel` that returns canned responses — no network, no vendor SDK. The core never knows the difference.
+</Tip>
+
+## Why adapters
+
+The core depends on the `LanguageModel` interface, and vendor SDKs live only inside adapter subpaths (see [Architecture](/concepts/architecture)). That boundary is what lets the same evaluation or optimization code run in the browser, swap providers without churn, and avoid shipping a Node-shaped vendor SDK to clients that import only the core.
+
+## Related concepts
+
+<Columns cols={2}>
+  <Card title="Prompt optimizer" icon="wand-sparkles" href="/prompt-optimizer/gepa">
+    GEPA drives optimization through a `LanguageModel`.
+  </Card>
+  <Card title="Logprob evaluator" icon="chart-bar" href="/prompt-optimizer/logprob-evaluator">
+    Score from Yes/No token log probabilities.
+  </Card>
+</Columns>
