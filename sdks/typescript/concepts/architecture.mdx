@@ -1,0 +1,52 @@
+---
+title: "Architecture"
+description: "Module boundaries, subpath exports, and the isomorphic design of @gaussia/sdk."
+---
+
+The SDK is built around clear module boundaries. Each module has one responsibility, and dependencies flow in one direction. Subpath exports mirror those boundaries, so the package surface enforces the architecture and enables tree-shaking.
+
+## Subpath exports
+
+Consumers reach internals only through documented subpaths:
+
+| Subpath | Responsibility |
+| --- | --- |
+| `@gaussia/sdk` | Core abstractions: `Gaussia` base class, `Retriever` and `LanguageModel` interfaces, `Logger` + `silentLogger`, and the exception hierarchy. |
+| `@gaussia/sdk/schemas` | Zod schemas and their inferred types. No business logic. |
+| `@gaussia/sdk/adapters/ai-sdk` | The Vercel AI SDK adapter. Depends only on core interfaces. |
+| `@gaussia/sdk/generators` | Synthetic dataset generation. |
+| `@gaussia/sdk/prompt-optimizer` | GEPA prompt optimization. |
+
+Deep imports into unpublished paths are not supported. If something is not reachable through a subpath, it is not part of the public surface.
+
+## Dependency direction
+
+Cross-module dependencies flow downward only. Core defines interfaces; everything else depends on core, never the reverse.
+
+- `core` depends on nothing else in the package.
+- `schemas` is standalone (used at the type level elsewhere).
+- `generators` and `prompt-optimizer` depend on core and schemas.
+- `adapters/*` depend only on core's interfaces.
+
+This is why importing the core package pulls in zero bytes from an adapter or the `ai` peer.
+
+## Vendor isolation
+
+`zod` and `ai` are peer dependencies, never direct dependencies. Vendor SDKs live only inside adapter subpaths. The core never imports a vendor SDK directly, so you can plug in a custom inference path by satisfying the [`LanguageModel`](/concepts/language-models) contract without pulling in an ecosystem you do not use.
+
+## Isomorphic by default
+
+The default and browser builds carry no Node-only built-ins. Node-only code (for example, the local Markdown loader in [generators](/generators/overview)) is reachable only through the package's `node` conditional export. In a browser build, those Node-only paths resolve to stubs that throw a clear error, so you choose an isomorphic alternative instead.
+
+This keeps the path open to in-browser evaluation flows while still offering Node conveniences where the runtime supports them.
+
+## Related concepts
+
+<Columns cols={2}>
+  <Card title="Evaluators" icon="list-checks" href="/concepts/evaluators">
+    How the `Gaussia` base class drives an evaluation.
+  </Card>
+  <Card title="Schemas" icon="shapes" href="/concepts/schemas">
+    The Zod-derived data model the SDK passes around.
+  </Card>
+</Columns>

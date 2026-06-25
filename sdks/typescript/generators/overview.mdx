@@ -1,0 +1,227 @@
+---
+title: "Generators"
+description: "Turn context documents into validated evaluation datasets with @gaussia/sdk/generators."
+---
+
+Hand-writing evaluation datasets is slow and biased toward the cases you already thought of. The `@gaussia/sdk/generators` subpath turns context documents into validated `Dataset[]` you can evaluate or [optimize against](/prompt-optimizer/gepa).
+
+A `BaseGenerator` runs a template-method pipeline: load the source into chunks, select chunk groups (one group becomes one `Dataset`), call your [`LanguageModel`](/concepts/language-models) per chunk for structured output, then map that output into validated `Dataset` and `Batch` objects.
+
+## Generate a dataset
+
+<Steps>
+  <Step title="Construct a generator with a model">
+    The generator talks only to the `LanguageModel` interface — bring any adapter or your own implementation.
+
+    ```ts
+    import { BaseGenerator } from "@gaussia/sdk/generators";
+    import { createAiSdkAdapter } from "@gaussia/sdk/adapters/ai-sdk";
+    import { openai } from "@ai-sdk/openai";
+
+    const model = createAiSdkAdapter(openai("gpt-4o-mini"));
+    const generator = new BaseGenerator({ model });
+    ```
+  </Step>
+  <Step title="Generate from a source">
+    ```ts
+    import { StringContextLoader } from "@gaussia/sdk/generators";
+
+    const datasets = await generator.generateDataset({
+      contextLoader: new StringContextLoader(),
+      source: [
+        "Northwind refunds are issued to the original payment method within 5 business days. A refund requires the order ID.",
+        "Enable two-factor authentication from Settings → Security. Support never asks for your password.",
+      ],
+      assistantId: "support-bot",
+      numQueriesPerChunk: 3,
+    });
+    ```
+
+    The result is a validated `Dataset[]`, ready to hand to a retriever, an [evaluator](/concepts/evaluators), or the [prompt optimizer](/prompt-optimizer/gepa).
+  </Step>
+</Steps>
+
+## Request options
+
+`generateDataset` takes one request object:
+
+<ParamField path="contextLoader" type="ContextLoader" required>
+  Turns `source` into chunks. Use `StringContextLoader` (isomorphic) or the Node-only Markdown loader.
+</ParamField>
+
+<ParamField path="source" type="string | string[]" required>
+  The context to generate from. A single string or an array; the loader decides how it becomes chunks.
+</ParamField>
+
+<ParamField path="assistantId" type="string" required>
+  The assistant id stamped onto every generated `Dataset`.
+</ParamField>
+
+<ParamField path="numQueriesPerChunk" type="number" default="3">
+  Queries generated per chunk in single-turn mode, or turns per conversation in conversation mode.
+</ParamField>
+
+<ParamField path="language" type="string" default="english">
+  Language the model is asked to generate in.
+</ParamField>
+
+<ParamField path="seedExamples" type="string[]">
+  Few-shot examples to steer style and difficulty. Included in the generation prompt.
+</ParamField>
+
+<ParamField path="customSystemPrompt" type="string">
+  Replaces the default generation system prompt when you need full control.
+</ParamField>
+
+<ParamField path="selectionStrategy" type="ChunkSelectionStrategy">
+  How chunks are grouped into datasets. Defaults to `SequentialStrategy`.
+</ParamField>
+
+<ParamField path="conversationMode" type="boolean" default="false">
+  Generate multi-turn conversations instead of independent single-turn queries.
+</ParamField>
+
+<ParamField path="signal" type="AbortSignal">
+  Cancel in-flight generation.
+</ParamField>
+
+## Context loaders
+
+A loader turns a `source` into a list of `Chunk`s. Loaders are interchangeable at the call site because they share the `string | string[]` source type.
+
+<Tabs>
+  <Tab title="StringContextLoader (isomorphic)">
+    Treats each input string as one pre-chunked unit: one string becomes one chunk, an array becomes one chunk per element. No Node built-ins, so it runs in the browser.
+
+    ```ts
+    import { StringContextLoader } from "@gaussia/sdk/generators";
+
+    const loader = new StringContextLoader({ idPrefix: "kb" }); // idPrefix default "string"
+    ```
+  </Tab>
+  <Tab title="LocalMarkdownLoader (Node)">
+    Reads Markdown files and chunks them with hybrid header-then-size splitting. Reachable only through the package's Node entry.
+
+    ```ts
+    import { LocalMarkdownLoader } from "@gaussia/sdk/generators";
+
+    const loader = new LocalMarkdownLoader({
+      maxChunkSize: 2000, // default
+      minChunkSize: 200, // default
+      headerLevels: [1, 2, 3], // split on these heading levels
+    });
+
+    const datasets = await generator.generateDataset({
+      contextLoader: loader,
+      source: ["docs/billing.md", "docs/security.md"],
+      assistantId: "support-bot",
+    });
+    ```
+
+    <Warning>
+      In a browser build, `LocalMarkdownLoader` and `createMarkdownLoader` resolve to a stub that throws `LoaderError`. Use `StringContextLoader` in the browser.
+    </Warning>
+  </Tab>
+</Tabs>
+
+You can also implement `ContextLoader` yourself — any object with `loadChunks(source): Promise<Chunk[]>` plugs in.
+
+## Selection strategies
+
+A strategy decides how chunks become datasets. Pass one as `selectionStrategy`.
+
+<Tabs>
+  <Tab title="SequentialStrategy (default)">
+    Groups every chunk into a single dataset containing queries from all chunks.
+
+    ```ts
+    import { SequentialStrategy } from "@gaussia/sdk/generators";
+
+    selectionStrategy: new SequentialStrategy();
+    ```
+  </Tab>
+  <Tab title="RandomSamplingStrategy">
+    Samples chunks `numSamples` times, producing one dataset per sample. Seed it for reproducible runs within TypeScript.
+
+    ```ts
+    import { RandomSamplingStrategy } from "@gaussia/sdk/generators";
+
+    selectionStrategy: new RandomSamplingStrategy({
+      numSamples: 5, // default
+      chunksPerSample: 3, // default
+      seed: 42, // omit for a non-reproducible system-random run
+      withReplacement: false, // default
+    });
+    ```
+  </Tab>
+  <Tab title="Custom strategy">
+    Implement `ChunkSelectionStrategy` — a synchronous `select(chunks): Iterable<Chunk[]>` where each yielded group becomes one dataset.
+
+    ```ts
+    import type { ChunkSelectionStrategy } from "@gaussia/sdk/generators";
+
+    const oneDatasetPerChunk: ChunkSelectionStrategy = {
+      *select(chunks) {
+        for (const chunk of chunks) yield [chunk];
+      },
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Single-turn and multi-turn
+
+<CodeGroup>
+
+```ts Single-turn (default)
+// numQueriesPerChunk independent query/answer pairs per chunk.
+// Output follows GeneratedQueriesOutput.
+const datasets = await generator.generateDataset({
+  contextLoader: new StringContextLoader(),
+  source: knowledgeBase,
+  assistantId: "support-bot",
+  numQueriesPerChunk: 3,
+});
+```
+
+```ts Multi-turn
+// A conversation per chunk; numQueriesPerChunk becomes the number of turns.
+// Output follows GeneratedConversationOutput.
+const datasets = await generator.generateDataset({
+  contextLoader: new StringContextLoader(),
+  source: knowledgeBase,
+  assistantId: "support-bot",
+  numQueriesPerChunk: 4,
+  conversationMode: true,
+});
+```
+
+</CodeGroup>
+
+## Steering the output
+
+Use `seedExamples` for few-shot guidance, or `customSystemPrompt` to replace the generation prompt entirely.
+
+```ts
+const datasets = await generator.generateDataset({
+  contextLoader: new StringContextLoader(),
+  source: knowledgeBase,
+  assistantId: "support-bot",
+  seedExamples: [
+    "Q: How long does a refund take? A: Refunds reach your original payment method within 5 business days.",
+  ],
+  // customSystemPrompt: "You write terse, factual support questions...",
+});
+```
+
+The default prompts are also exported (`DEFAULT_SYSTEM_PROMPT`, `DEFAULT_CONVERSATION_PROMPT`, `fillTemplate`, `buildSeedExamplesSection`) if you want to build on them. See [Schemas](/concepts/schemas) for the `GeneratedQueriesOutput` and `GeneratedConversationOutput` shapes.
+
+## Runtime
+
+The generators bundle pulls in zero AI-SDK bytes, and the default (browser) bundle imports no Node-only built-ins. You bring a `LanguageModel`; the generators add no vendor dependency of their own. All model access flows through `generateObject` for validated structured output — there is no free-text JSON fallback.
+
+## Next steps
+
+<Card title="Optimize a prompt against generated data" icon="wand-sparkles" href="/prompt-optimizer/gepa">
+  Feed a generated `Dataset[]` straight into the GEPA optimizer.
+</Card>

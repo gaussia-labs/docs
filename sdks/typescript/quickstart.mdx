@@ -1,0 +1,103 @@
+---
+title: "Quickstart"
+description: "Score a dataset end to end: a retriever supplies data, an evaluator uses a model to judge each answer."
+---
+
+This walkthrough builds a complete evaluation. A retriever supplies a dataset, an evaluator uses a language model to score each answer against its ground truth, and `run` returns those scores. By the end you will see exactly where the model does its work.
+
+## Prerequisites
+
+- The SDK and its peers installed. See [Installation](/installation).
+- The `ai` peer and a provider package such as `@ai-sdk/openai`, with provider credentials configured. The evaluation below calls a real model.
+
+## 1. Load a dataset with a retriever
+
+A [retriever](/concepts/evaluators) returns `Dataset[]`. Build datasets and batches through their schemas so they are validated. Here one session holds two questions — one answered well, one answered poorly — so the scores vary.
+
+```ts
+import type { Retriever } from "@gaussia/sdk";
+import { Batch, Dataset } from "@gaussia/sdk/schemas";
+
+class SupportRetriever implements Retriever {
+  async loadDataset() {
+    return [
+      Dataset.parse({
+        sessionId: "s-1",
+        assistantId: "support-bot",
+        context: "Refunds reach your original payment method within 5 business days.",
+        conversation: [
+          Batch.parse({
+            qaId: "q-1",
+            query: "How long does a refund take?",
+            assistant: "Refunds arrive within 5 business days.",
+            groundTruthAssistant: "Within 5 business days, to your original payment method.",
+          }),
+          Batch.parse({
+            qaId: "q-2",
+            query: "How long does a refund take?",
+            assistant: "Not sure, maybe a few weeks.",
+            groundTruthAssistant: "Within 5 business days, to your original payment method.",
+          }),
+        ],
+      }),
+    ];
+  }
+}
+```
+
+## 2. Wire a model
+
+Evaluators reach a language model through an [adapter](/concepts/language-models). Wrap a Vercel AI SDK model so it satisfies the `LanguageModel` contract. This `model` is what the evaluator calls in the next step.
+
+```ts
+import { createAiSdkAdapter } from "@gaussia/sdk/adapters/ai-sdk";
+import { openai } from "@ai-sdk/openai";
+
+const model = createAiSdkAdapter(openai("gpt-4o-mini"));
+```
+
+## 3. Define an evaluator that uses the model
+
+Subclass `Gaussia` and implement `batch`. This method is where the measuring happens: the base class calls it once per session, and you decide what to compute. Here you ask the model to score each answer against its ground truth and push the score to `this.metrics`.
+
+```ts
+import { Gaussia, type BatchInput } from "@gaussia/sdk";
+import { z } from "zod";
+
+class JudgeAnswers extends Gaussia<number> {
+  protected async batch({ batch, context }: BatchInput) {
+    for (const qa of batch) {
+      const { object } = await model.generateObject({
+        system: "Score from 0 to 1 how well the answer matches the ground truth, given the context.",
+        prompt: `Context: ${context}\nQuestion: ${qa.query}\nAnswer: ${qa.assistant}\nGround truth: ${qa.groundTruthAssistant}`,
+        schema: z.object({ score: z.number() }),
+      });
+      this.metrics.push(object.score);
+    }
+  }
+}
+```
+
+The model is reached through the `model` constant from step 2 — the base class does not inject one, so your evaluator decides whether and how to use a model. A purely deterministic evaluator (string match, regex) needs no model at all.
+
+## 4. Run it and read the scores
+
+`run` constructs the evaluator from your retriever class, drives every session through `batch`, and returns whatever you collected in `this.metrics`.
+
+```ts
+const scores = await JudgeAnswers.run(SupportRetriever, {});
+console.log(scores); // e.g. → [0.9, 0.2] — the strong answer scores high, the weak one low
+```
+
+That is the full loop: the retriever supplied the data, the model scored each answer inside `batch`, and `run` returned the per-answer scores. The model was the judge, not a side demo.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Evaluators" icon="list-checks" href="/concepts/evaluators">
+    The full `batch` lifecycle, iteration levels, and weighting.
+  </Card>
+  <Card title="Generators" icon="sparkles" href="/generators/overview">
+    Generate datasets from context documents instead of writing them by hand.
+  </Card>
+</Columns>

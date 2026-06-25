@@ -1,0 +1,82 @@
+---
+title: "Evaluators"
+description: "Subclass the Gaussia base class to evaluate datasets batch by batch."
+---
+
+The `Gaussia` base class is the entry point for evaluation. It defines the processing flow and delegates the per-batch work to your subclass. This is the Template Method pattern: the base class owns the lifecycle, and you implement one method.
+
+## The batch method
+
+Extend `Gaussia` and implement the abstract `batch` method. The base class calls it once per unit of work and collects whatever you push to `this.metrics`.
+
+```ts
+import { Gaussia, type BatchInput } from "@gaussia/sdk";
+
+class CountBatches extends Gaussia<number> {
+  protected async batch({ sessionId, batch }: BatchInput) {
+    this.metrics.push(batch.length);
+  }
+}
+```
+
+The type parameter on `Gaussia<number>` is the metric type collected in `this.metrics` and returned by `run`.
+
+### Batch input
+
+Each call to `batch` receives:
+
+<ParamField path="sessionId" type="string">
+  Identifier of the session being evaluated.
+</ParamField>
+
+<ParamField path="context" type="string">
+  The session context (for example, the source document or system context).
+</ParamField>
+
+<ParamField path="assistantId" type="string">
+  Identifier of the assistant under evaluation.
+</ParamField>
+
+<ParamField path="batch" type="Batch[]">
+  The conversation batches for this unit of work.
+</ParamField>
+
+<ParamField path="language" type="string | null">
+  The session language, or `null` when unspecified.
+</ParamField>
+
+## Running an evaluation
+
+Call the static `run` method with your retriever class and its config. The base class constructs the retriever, loads the dataset, processes it, and returns the collected metrics.
+
+```ts
+const totals = await CountBatches.run(MyRetriever, retrieverConfig);
+```
+
+`run` accepts an optional third argument for options such as a [`Logger`](/concepts/architecture).
+
+## Iteration levels
+
+The retriever's `iterationLevel` controls how the dataset is consumed:
+
+- `full_dataset` (default): `loadDataset` returns `Dataset[]`, processed in order.
+- `stream_sessions`: `loadDataset` returns an async iterable of `Dataset`, processed as they arrive.
+- `stream_batches`: `loadDataset` returns an async iterable of `StreamedBatch`, processed one batch at a time.
+
+If the retriever returns an async iterable while the level is `full_dataset`, the constructor throws a `RetrieverError`. Set a streaming level when you stream.
+
+## Hooks
+
+- `onProcessComplete` runs after all batches are processed. Override it to finalize aggregate metrics. The default is a no-op.
+- `resolveWeights` normalizes per-batch weights to sum to 1, falling back to uniform weights (with a logged warning) when explicit weights are missing or inconsistent.
+
+## Related concepts
+
+<Columns cols={2}>
+  <Card title="Schemas" icon="shapes" href="/concepts/schemas">
+    `Dataset`, `Batch`, and the rest of the data model.
+  </Card>
+  <Card title="Language models" icon="plug" href="/concepts/language-models">
+    Call a model from inside your `batch` implementation.
+  </Card>
+</Columns>

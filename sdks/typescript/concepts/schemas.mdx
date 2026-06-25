@@ -1,0 +1,49 @@
+---
+title: "Schemas"
+description: "The Zod-derived data model exported from @gaussia/sdk/schemas."
+---
+
+The SDK's public types are Zod schemas, exported from `@gaussia/sdk/schemas`. Each schema is a single source of truth: it validates values at runtime, and its TypeScript type is inferred from the schema rather than hand-written. Build values through the schemas so they are validated as you create them.
+
+```ts
+import { Batch, Dataset } from "@gaussia/sdk/schemas";
+
+const batch = Batch.parse({
+  qaId: "q-1",
+  query: "Say hello",
+  assistant: "Hello!",
+  groundTruthAssistant: "Hello!",
+});
+```
+
+`Batch.parse` returns a validated, fully typed value and throws on invalid input.
+
+## Core data model
+
+These describe the evaluation input consumed by the [`Gaussia`](/concepts/evaluators) base class.
+
+- `Dataset` — one evaluation session: `sessionId`, `assistantId`, `context`, a `conversation` of `Batch[]`, and an optional `language`.
+- `Batch` — one query/answer unit: `qaId`, `query`, `assistant`, `groundTruthAssistant`, and an optional `weight`.
+- `IterationLevel` — `full_dataset`, `stream_sessions`, or `stream_batches`; selects how a retriever's data is consumed.
+- `SessionMetadata` and `StreamedBatch` — the streaming shapes used by the streaming iteration levels.
+- `Logprobs` — token log-probability data passed through evaluation.
+
+## Generator schemas
+
+These describe the structured output of [generators](/generators/overview).
+
+- `Chunk` — a unit of context produced by a loader.
+- `GeneratedQuery` and `GeneratedQueriesOutput` — single-turn generation output.
+- `ConversationTurn` and `GeneratedConversationOutput` — multi-turn generation output.
+
+## Prompt-optimizer schemas
+
+These describe the result of [GEPA optimization](/prompt-optimizer/gepa).
+
+- `OptimizationResult` — the final result: optimized prompt, initial and final scores, and history.
+- `IterationResult` and `CandidateResult` — per-iteration detail in the history.
+- `FailingExample` — an example that scored below threshold and drove candidate generation.
+
+## Why Zod
+
+Deriving types from schemas keeps the static type and the runtime check in lockstep. Structured model output uses the same approach: `generateObject` on a [`LanguageModel`](/concepts/language-models) validates the model's response against the Zod schema you pass.

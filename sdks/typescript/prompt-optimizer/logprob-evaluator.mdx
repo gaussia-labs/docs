@@ -1,0 +1,119 @@
+---
+title: "Logprob evaluator"
+description: "Score prompt-optimizer candidates from Yes/No token log probabilities for better-calibrated judging."
+---
+
+`LogprobEvaluator` is an opt-in judge for the [GEPA optimizer](/prompt-optimizer/gepa). Instead of asking the model to verbalize a numeric score — which is coarse and tends to snap to round numbers — it asks a Yes/No question and reads the model's **token log probabilities**. The probability mass on "Yes" versus "No" becomes a genuinely graded score.
+
+The payoff shows on **uncertain** judgments. A verbalized score jumps from 0.7 to 0.9 with nothing in between; a logprob is continuous, so borderline answers get borderline scores. This is a port of pygaussia's guardian scoring.
+
+## Use it
+
+Construct a `LogprobEvaluator` and pass its `evaluate` function as the optimizer's `evaluator`. `.evaluate` is a bound field, so you can pass it around freely.
+
+```ts
+import { GEPAOptimizer, LogprobEvaluator } from "@gaussia/sdk/prompt-optimizer";
+
+const evaluator = new LogprobEvaluator({
+  model,
+  criteria: "The answer is one sentence AND addresses every part of the question using only the context.",
+}).evaluate;
+
+const result = await GEPAOptimizer.run(EvalSet, datasets, {
+  model,
+  seedPrompt: "Be brief.",
+  objective: "Answer in one sentence that fully covers every part of the question.",
+  evaluator,
+  failureThreshold: 0.7,
+});
+```
+
+## Options
+
+<ParamField path="model" type="LanguageModel" required>
+  The judge model. Token log probabilities are requested from it.
+</ParamField>
+
+<ParamField path="criteria" type="string" required>
+  The natural-language criterion the answer is judged against.
+</ParamField>
+
+<ParamField path="positiveToken" type="string" default="yes">
+  Token representing a passing judgment. Compared case-insensitively.
+</ParamField>
+
+<ParamField path="negativeToken" type="string" default="no">
+  Token representing a failing judgment. Compared case-insensitively.
+</ParamField>
+
+## Where the signal comes from
+
+The score is derived from raw token log probabilities, which any consumer can request directly from a [`LanguageModel`](/concepts/language-models). Pass a **number** for `logprobs` to get top-K alternatives per token; passing `true` returns the chosen tokens with no alternatives.
+
+```ts
+const raw = await model.generateText({
+  prompt: 'Answer with exactly one word, "Yes" or "No": is the sky blue on a clear day?',
+  logprobs: 10, // top-10 alternatives per position
+});
+
+for (const pos of raw.logprobs ?? []) {
+  const alts = (pos.topLogprobs ?? [])
+    .slice(0, 4)
+    .map((a) => `${JSON.stringify(a.token)}=${Math.exp(a.logprob).toFixed(3)}`)
+    .join("  ");
+  console.log(`token ${JSON.stringify(pos.token)} · top: ${alts}`);
+}
+```
+
+`Math.exp(logprob)` converts a log probability into a probability. The evaluator reads the probability on the positive token versus the negative token to produce its score.
+
+## Logprob vs. structured judging
+
+On a clear-cut answer both judges agree. On a borderline answer the logprob judge is graded where the structured judge rounds off.
+
+```ts
+import { LLMEvaluator, LogprobEvaluator } from "@gaussia/sdk/prompt-optimizer";
+
+const criteria = "The answer FULLY and directly addresses every part of the user's question.";
+const logprobJudge = new LogprobEvaluator({ model, criteria }).evaluate;
+const structuredJudge = new LLMEvaluator({ model, criteria }).evaluate;
+
+const query = "How do I reset my password and turn on two-factor authentication?";
+const context = "Reset from the login page's 'Forgot password' link. Turn on 2FA under Settings → Security.";
+
+const answers = [
+  ["complete ", "Reset via the 'Forgot password' link, then enable 2FA under Settings → Security."],
+  ["partial  ", "You can reset your password from the login page's 'Forgot password' link."], // ignores 2FA — borderline
+  ["off-topic", "Our support team is available 9am–5pm on weekdays."],
+];
+
+for (const [label, answer] of answers) {
+  const lp = await logprobJudge(answer, "", query, context);
+  const st = await structuredJudge(answer, "", query, context);
+  console.log(`${label} | logprob ${lp.toFixed(2)} | structured ${st.toFixed(2)}`);
+}
+```
+
+The `partial` row is where logprobs earn their keep: it is genuinely half-right, and the logprob score reflects that instead of snapping to 0 or 1.
+
+## Fallback behavior
+
+Log probabilities are provider-dependent. When the model returns no usable logprobs, or the response does not contain both the positive and negative tokens, the evaluator transparently falls back to the structured-output `LLMEvaluator` so optimization continues uninterrupted.
+
+<Note>
+  To benefit from logprob scoring, use a provider that returns token log probabilities (for example, OpenAI). The [ai-sdk adapter](/concepts/language-models) maps provider logprobs into the vendor-neutral `TokenLogprob[]` shape.
+</Note>
+
+## When to use it
+
+<Columns cols={3}>
+  <Card title="Logprob judge" icon="chart-bar">
+    Subjective criteria where confidence is genuinely graded, and your provider exposes logprobs.
+  </Card>
+  <Card title="Default LLM judge" icon="scale-balanced">
+    A simple structured-output judge. Omit `evaluator`, or use `LLMEvaluator` with a rubric.
+  </Card>
+  <Card title="Deterministic evaluator" icon="code">
+    Scoring is checkable in code and you want it cheap and reproducible.
+  </Card>
+</Columns>

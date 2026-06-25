@@ -1,0 +1,48 @@
+---
+title: "Gaussia TypeScript SDK"
+description: "Evaluate LLM applications in TypeScript with the @gaussia/sdk package."
+---
+
+`@gaussia/sdk` is the TypeScript port of [`pygaussia`](https://github.com/gaussia-labs/pygaussia), the Gaussia evaluation framework. It gives you the building blocks to evaluate LLM applications: a base evaluator, a retriever contract for loading datasets, a vendor-neutral language-model adapter, synthetic dataset generation, and GEPA prompt optimization.
+
+The SDK runs in Node and in modern browsers from the same source, and ships its public types as Zod schemas so values are validated at runtime and typed at compile time.
+
+## What you can do
+
+<Columns cols={2}>
+  <Card title="Evaluate datasets" icon="list-checks" href="/concepts/evaluators">
+    Subclass the `Gaussia` base class to score conversations batch by batch.
+  </Card>
+  <Card title="Plug in any model" icon="plug" href="/concepts/language-models">
+    Wrap a Vercel AI SDK model, or implement the `LanguageModel` contract for your own provider.
+  </Card>
+  <Card title="Generate datasets" icon="sparkles" href="/generators/overview">
+    Turn context documents into validated evaluation datasets.
+  </Card>
+  <Card title="Optimize prompts" icon="wand-sparkles" href="/prompt-optimizer/gepa">
+    Improve an underperforming system prompt against a dataset with GEPA.
+  </Card>
+</Columns>
+
+## How it fits together
+
+The SDK is organized into subpath exports that mirror its module boundaries. You import only what you use, and a consumer importing the core package pulls in zero bytes from the optional adapter or its `ai` peer.
+
+| Subpath | What you get |
+| --- | --- |
+| `@gaussia/sdk` | `Gaussia` base class, `Retriever` and `LanguageModel` interfaces, `Logger` + `silentLogger`, exception hierarchy. |
+| `@gaussia/sdk/schemas` | Zod schemas for datasets, batches, generator output, and optimization results. |
+| `@gaussia/sdk/adapters/ai-sdk` | `createAiSdkAdapter` — wraps a Vercel AI SDK model as a `LanguageModel`. |
+| `@gaussia/sdk/generators` | `BaseGenerator`, context loaders, and selection strategies for synthetic datasets. |
+| `@gaussia/sdk/prompt-optimizer` | `GEPAOptimizer`, evaluators, and the `Executor`/`Evaluator` contracts. |
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Install the SDK" icon="download" href="/installation">
+    Add the package and its peer dependencies.
+  </Card>
+  <Card title="Run your first evaluation" icon="play" href="/quickstart">
+    Score a small dataset end to end.
+  </Card>
+</Columns>
