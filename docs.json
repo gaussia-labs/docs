@@ -141,6 +141,7 @@
               "sdks/boltzmann/guides/query",
               "sdks/boltzmann/guides/retention",
               "sdks/boltzmann/guides/distribution",
+              "sdks/boltzmann/guides/reconciliation",
               "sdks/boltzmann/guides/conformance"
             ]
           }
